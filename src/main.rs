@@ -1,4 +1,5 @@
 pub mod ast;
+pub mod codegen;
 pub mod irgen;
 pub mod macros;
 
@@ -6,6 +7,7 @@ use koopa::back::KoopaGenerator;
 use lalrpop_util::lalrpop_mod;
 use std::env::args;
 use std::fs::read_to_string;
+use std::io::Write;
 use std::{fmt, io};
 
 lalrpop_mod!(sysy);
@@ -21,14 +23,27 @@ fn main() -> Result<(), Error> {
     let input = read_to_string(input).map_err(Error::Io)?;
 
     let ast = sysy::CompUnitParser::new().parse(&input).unwrap();
+    println!("{:#?}", ast);
+
     let program = irgen::generate_program(&ast).map_err(Error::Generate)?;
 
-    KoopaGenerator::from_path(output)
-        .map_err(Error::Io)?
-        .generate_on(&program)
-        .map_err(Error::Io)?;
-
-    println!("{:#?}", ast);
+    match mode.as_str() {
+        "-koopa" => {
+            KoopaGenerator::from_path(output)
+                .map_err(Error::Io)?
+                .generate_on(&program)
+                .map_err(Error::Io)?;
+        }
+        "-riscv" => {
+            let mut output = std::fs::File::create(output).map_err(Error::Io)?;
+            let mut output_buf = Vec::new();
+            codegen::generate_asm(&program, &mut output_buf);
+            output.write_all(&output_buf).map_err(Error::Io)?;
+        }
+        _ => {
+            unimplemented!("unknown output file type")
+        }
+    }
 
     Ok(())
 }

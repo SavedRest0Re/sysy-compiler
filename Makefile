@@ -1,5 +1,3 @@
-
-
 .PHONY: autotest build
 
 # Default target - handle autotest framework requirements
@@ -19,6 +17,10 @@ build:
 	fi
 
 # Local testing with Docker
-autotest:
+testkoopa:
 	docker run -it --rm -v $(shell pwd):/root/compiler maxxing/compiler-dev \
 		autotest -koopa -s lv1 /root/compiler
+
+testriscv:
+	docker run -it --rm -v $(shell pwd):/root/compiler maxxing/compiler-dev \
+		autotest -riscv -s lv1 /root/compiler
