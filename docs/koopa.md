@@ -1,6 +1,7 @@
 
 ---
 References:
+[北大编译实践在线文档](https://pku-minic.github.io/online-doc/#/)
 [Koopa IR 规范](https://pku-minic.github.io/online-doc/#/misc-app-ref/koopa)
 [Crate koopa - DOCS.RS](https://docs.rs/koopa/latest/koopa/index.html)
 
@@ -11,6 +12,17 @@ Koopa IR 的设计理念
 - 明确的所有权关系：必须先将函数添加到程序，才能创建值
 - 数据流和控制流分离：*DFG* 管理值/指令，*Layout* 管理基本块
 
+DataFlowGraph 管理函数内的所有值和基本块：
+- 创建和删除值
+- 创建和删除基本块
+- 维护 Use-Def 链
+- 提供值的查询接口
+
+Layout 管理基本块和指令的顺序：
+- 维护基本块的执行顺序
+- 维护每个基本块内指令的顺序
+- 支持高效的插入和删除
+
 教育目的：
 - 强制理解 IR 结构：让你明确知道每个操作属于哪个层级
 - 类型安全：整数常量需要函数上下文才能推断类型
@@ -18,15 +30,65 @@ Koopa IR 的设计理念
 
 ```
 Program
-├── 全局变量列表
-└── 函数列表
-    └── Function
-        ├── DFG (Data Flow Graph) - 数据流
-        │   ├── 常量: integer(0), zero_init()
-        │   └── 指令: load, store, binary, ret, call
-        └── Layout - 控制流
-            ├── 基本块列表: %entry, %cond_true
-            └── 指令序列: 每个基本块内的指令顺序
+    ├── Global Values (全局值)
+    ├── Functions (函数)
+    │       ├── DataFlowGraph (数据流图)
+    │       │       ├── Values (值)
+    │       │       └── BasicBlocks (基本块)
+    │       └── Layout (布局)
+    │               ├── BB List (基本块列表)
+    │               └── Inst List (指令列表)
+    └── Types (类型系统)
+```
+
+```
+Value (值)
+├── Constants (常量)
+│   ├── Integer      - 整数常量
+│   ├── ZeroInit     - 零初始化
+│   ├── Undef        - 未定义值
+│   └── Aggregate    - 聚合常量
+│
+├── References (引用)
+│   ├── FuncArgRef   - 函数参数引用
+│   └── BlockArgRef  - 基本块参数引用
+│
+└── Instructions (指令)
+    ├── Memory
+    │   ├── Alloc         - 局部内存分配
+    │   ├── GlobalAlloc   - 全局内存分配
+    │   ├── Load          - 内存读取
+    │   └── Store         - 内存写入
+    │
+    ├── Pointer
+    │   ├── GetPtr        - 指针偏移
+    │   └── GetElemPtr    - 元素指针
+    │
+    ├── Arithmetic
+    │   └── Binary        - 二元运算
+    │
+    └── Control Flow
+        ├── Branch        - 条件分支
+        ├── Jump          - 无条件跳转
+        ├── Call          - 函数调用
+        └── Return        - 函数返回
+```
+
+`Program`: 程序的顶层结构
+`FunctionData`: 函数的完整定义
+`BasicBlockData`: 基本块的数据
+`ValueData`: 值的元数据
+
+```
+Builder Traits
+├── EntityInfoQuerier    - 查询实体信息
+├── ValueInserter        - 插入值
+├── ValueBuilder         - 构建值（常量）
+├── GlobalInstBuilder    - 构建全局指令
+├── LocalInstBuilder     - 构建局部指令
+└── BasicBlockBuilder    - 构建基本块
+```
+
 ```
 
 顺序要求:
@@ -42,6 +104,10 @@ Program
 
 ---
 在函数添加到程序后创建值: 因为类型推断需要函数上下文
+
+---
+对于基本块的指令列表: 指令的数据并没有直接按照指令出现的顺序存储在列表中. 
+指令的数据被统一存放在函数内的一个叫做 DataFlowGraph 的结构中, 同时每个指令具有一个指令 ID (或者也可以叫 handle), 你可以通过 ID 在这个结构中获取对应的指令. 指令的列表中存放的其实是指令的 ID.
 
 ---
 ```

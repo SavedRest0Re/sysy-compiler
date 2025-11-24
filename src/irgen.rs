@@ -73,10 +73,11 @@ impl<'ast> IRGen<'ast> for FuncDef {
     type Output = ();
 
     fn generate(&'ast self, program: &mut Program) -> Result<Self::Output> {
-        // let ret_ty = self.ret_ty.generate(program)?;
-
-        let func_def = FunctionData::new(format!("@{}", self.ident), vec![], Type::get_i32());
-        let func = program.new_func(func_def);
+        let func = program.new_func(FunctionData::new(
+            format!("@{}", self.ident),
+            vec![],
+            Type::get_i32(),
+        ));
 
         let func_data = program.func_mut(func);
         // Create basic block
