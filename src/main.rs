@@ -36,9 +36,7 @@ fn main() -> Result<(), Error> {
         }
         "-riscv" => {
             let mut output = std::fs::File::create(output).map_err(Error::Io)?;
-            let mut output_buf = Vec::new();
-            codegen::generate_asm(&program, &mut output_buf);
-            output.write_all(&output_buf).map_err(Error::Io)?;
+            codegen::generate_asm(&program, &mut output);
         }
         _ => {
             unimplemented!("unknown output file type")
