@@ -5,7 +5,7 @@ use koopa::ir::{
     builder::{BasicBlockBuilder, LocalInstBuilder, ValueBuilder},
 };
 
-use crate::ast::*;
+use crate::{add_bb, add_inst, ast::*, new_bb, new_value};
 
 pub type Result<T> = std::result::Result<T, Error>;
 
@@ -78,40 +78,18 @@ impl<'ast> IRGen<'ast> for FuncDef {
         let func_def = FunctionData::new(format!("@{}", self.ident), vec![], Type::get_i32());
         let func = program.new_func(func_def);
 
+        let func_data = program.func_mut(func);
         // Create basic block
-        let entry_bb = program
-            .func_mut(func)
-            .dfg_mut()
-            .new_bb()
-            .basic_block(Some("%entry".into()));
+        let entry_bb = new_bb!(func_data).basic_block(Some("%entry".into()));
 
         // Add the basic block to the function's layout first
-        program
-            .func_mut(func)
-            .layout_mut()
-            .bbs_mut()
-            .push_key_back(entry_bb)
-            .unwrap();
+        add_bb!(func_data, entry_bb);
 
         // Create values after the function is added to the program
-        let ret_value = program
-            .func_mut(func)
-            .dfg_mut()
-            .new_value()
-            .integer(self.block.stmt.num);
-        let ret_inst = program
-            .func_mut(func)
-            .dfg_mut()
-            .new_value()
-            .ret(Some(ret_value));
+        let ret_value = new_value!(func_data).integer(self.block.stmt.num);
+        let ret_inst = new_value!(func_data).ret(Some(ret_value));
 
-        program
-            .func_mut(func)
-            .layout_mut()
-            .bb_mut(entry_bb)
-            .insts_mut()
-            .push_key_back(ret_inst)
-            .unwrap();
+        add_inst!(func_data, entry_bb, ret_inst);
 
         Ok(())
     }
