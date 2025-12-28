@@ -5,7 +5,7 @@ use koopa::ir::{Function, Program, Value};
 pub struct CodegenCtx<'p> {
     program: &'p Program,
     cur_func: Option<Function>,
-    global_values: HashMap<Value, String>,
+    global: HashMap<Value, String>,
 }
 
 impl<'p> CodegenCtx<'p> {
@@ -13,7 +13,7 @@ impl<'p> CodegenCtx<'p> {
         Self {
             program,
             cur_func: None,
-            global_values: HashMap::new(),
+            global: HashMap::new(),
         }
     }
 
@@ -34,10 +34,10 @@ impl<'p> CodegenCtx<'p> {
     }
 
     pub fn global_value(&self, value: Value) -> &str {
-        self.global_values.get(&value).unwrap()
+        self.global.get(&value).unwrap()
     }
 
     pub fn insert_global_value(&mut self, value: Value, name: String) {
-        self.global_values.insert(value, name);
+        self.global.insert(value, name);
     }
 }

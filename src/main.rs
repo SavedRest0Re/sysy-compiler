@@ -1,7 +1,6 @@
+pub mod asm;
 pub mod ast;
-pub mod codegen;
-pub mod irgen;
-pub mod macros;
+pub mod ir;
 
 use koopa::back::KoopaGenerator;
 use lalrpop_util::lalrpop_mod;
@@ -15,8 +14,10 @@ lalrpop_mod!(sysy);
 fn main() -> Result<(), Error> {
     let mut args = args();
     args.next();
+
     let mode = args.next().unwrap();
     let input = args.next().unwrap();
+
     args.next();
     let output = args.next().unwrap();
 
@@ -25,18 +26,18 @@ fn main() -> Result<(), Error> {
     let ast = sysy::CompUnitParser::new().parse(&input).unwrap();
     println!("{:#?}", ast);
 
-    let program = irgen::generate_program(&ast).map_err(Error::Generate)?;
+    let program = ir::generate_program(ast).map_err(Error::Ir)?;
 
     match mode.as_str() {
-        "-koopa" => {
+        "-koopa" | "-k" => {
             KoopaGenerator::from_path(output)
                 .map_err(Error::Io)?
                 .generate_on(&program)
                 .map_err(Error::Io)?;
         }
-        "-riscv" => {
+        "-riscv" | "-r" => {
             let mut output = std::fs::File::create(output).map_err(Error::Io)?;
-            codegen::generate_asm(&program, &mut output);
+            asm::generate_asm(&program, &mut output);
         }
         _ => {
             unimplemented!("unknown output file type")
@@ -47,14 +48,15 @@ fn main() -> Result<(), Error> {
 }
 
 enum Error {
-    Generate(irgen::Error),
     Io(io::Error),
+    Ir(ir::Error),
+    // Asm(asm::Error),
 }
 
 impl fmt::Display for Error {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::Generate(e) => write!(f, "generate error: {}", e),
+            Self::Ir(e) => write!(f, "ir error: {}", e),
             Self::Io(e) => write!(f, "io error: {}", e),
         }
     }

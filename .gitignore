@@ -1,1 +1,4 @@
 /target
+
+examples/fixtures/*.koopa
+examples/fixtures/*.riscv

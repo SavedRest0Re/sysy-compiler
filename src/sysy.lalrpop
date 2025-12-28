@@ -22,7 +22,115 @@ FuncType: FuncType = "int" => FuncType::Int;
 
 Block: Block = "{" <stmt: Stmt> "}" => Block { stmt };
 
-Stmt: Stmt = "return" <num: Number> ";" => Stmt { num };
+Stmt: Stmt = "return" <exp: Exp> ";" => Stmt { exp };
+
+// Exp ::= LOrExp;
+Exp: Exp = {
+  <exp: LOrExp> => Exp::LOr(exp),
+};
+
+// LOrExp ::= LAndExp | LOrExp "||" LAndExp;
+LOrExp: LOrExp = {
+  <land: LAndExp> => LOrExp::LAnd(land),
+  <l: LOrExp> "||" <r: LAndExp> => LOrExp::LOrLAnd(
+    Box::new(l),
+    r,
+  ),
+};
+
+// LAndExp ::= EqExp | LAndExp "&&" EqExp;
+LAndExp: LAndExp = {
+  <eq: EqExp> => LAndExp::Eq(eq),
+  <l: LAndExp> "&&" <r: EqExp> => LAndExp::LAndEq(
+    Box::new(l),
+    r,
+  ),
+};
+
+// EqExp ::= RelExp | EqExp ("==" | "!=") RelExp;
+EqExp: EqExp = {
+  <exp: RelExp> => EqExp::Rel(exp),
+  <l: EqExp> <op: EqOp> <r: RelExp> => EqExp::EqRel(
+    Box::new(l),
+    op,
+    r
+  )
+};
+
+// RelExp ::= AddExp | RelExp ("<" | "<=" | ">" | ">=") AddExp;
+RelExp: RelExp = {
+  <exp: AddExp> => RelExp::Add(exp),
+  <l: RelExp> <op: RelOp> <r: AddExp> => RelExp::RelAdd(
+    Box::new(l),
+    op,
+    r,
+  ),
+};
+
+// AddExp ::= MulExp | AddExp ("+" | "-") MulExp;
+AddExp: AddExp = {
+  <exp: MulExp> => AddExp::Mul(exp),
+  <l: AddExp> <op: AddOp> <r: MulExp> => AddExp::AddMul(
+    Box::new(l),
+    op,
+    r,
+  ),
+};
+
+// MulExp ::= UnaryExp | MulExp ("*" | "/" | "%") UnaryExp;
+MulExp: MulExp = {
+  <exp: UnaryExp> => MulExp::Unary(exp),
+  <l: MulExp> <op: MulOp> <r: UnaryExp> => MulExp::MulUnary(
+    Box::new(l),
+    op,
+    r,
+  ),
+};
+
+// UnaryExp ::= PrimaryExp | UnaryOp UnaryExp
+UnaryExp: UnaryExp = {
+  <exp: PrimaryExp> => UnaryExp::PrimaryExp(exp),
+  <op: UnaryOp> <exp: UnaryExp> => UnaryExp::Unary(
+    op,
+    Box::new(exp),
+  ),
+};
+
+// PrimaryExp ::= "(" Exp ")" | Number;
+PrimaryExp: PrimaryExp = {
+  <num: Number> => PrimaryExp::Number(num),
+  "(" <exp: Exp> ")" => PrimaryExp::Paren(Box::new(exp)),
+};
+
+UnaryOp: UnaryOp = {
+  "+" => UnaryOp::Plus,
+  "-" => UnaryOp::Minus,
+  "!" => UnaryOp::Not,
+};
+
+MulOp: MulOp = {
+  "*" => MulOp::Mul,
+  "/" => MulOp::Div,
+  "%" => MulOp::Mod,
+};
+
+AddOp: AddOp = {
+  "+" => AddOp::Add,
+  "-" => AddOp::Sub,
+};
+
+RelOp: RelOp = {
+  "<" => RelOp::Lt,
+  "<=" => RelOp::Le,
+  ">" => RelOp::Gt,
+  ">=" => RelOp::Ge,
+};
+
+EqOp: EqOp = {
+  "==" => EqOp::Eq,
+  "!=" => EqOp::Ne,
+};
+
 
 Number: i32 = <num: IntConst> => <>;
 
@@ -32,4 +140,4 @@ IntConst: i32 = {
   r"[1-9][0-9]*" => i32::from_str_radix(<>, 10).unwrap(),
   r"0[0-7]*" => i32::from_str_radix(<>, 8).unwrap(),
   r"0[xX][0-9a-fA-F]+" => i32::from_str_radix(&<>[2..], 16).unwrap(),
-}
+};

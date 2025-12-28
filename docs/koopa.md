@@ -4,6 +4,8 @@ References:
 [北大编译实践在线文档](https://pku-minic.github.io/online-doc/#/)
 [Koopa IR 规范](https://pku-minic.github.io/online-doc/#/misc-app-ref/koopa)
 [Crate koopa - DOCS.RS](https://docs.rs/koopa/latest/koopa/index.html)
+[RISC-V Cheat Sheet](https://projectf.io/posts/riscv-cheat-sheet/)
+[RISC-V 指令速查](https://pku-minic.github.io/online-doc/#/misc-app-ref/riscv-insts)
 
 ---
 Koopa IR 的设计理念
@@ -27,6 +29,26 @@ Layout 管理基本块和指令的顺序：
 - 强制理解 IR 结构：让你明确知道每个操作属于哪个层级
 - 类型安全：整数常量需要函数上下文才能推断类型
 - 防止悬空引用：严格的层次结构防止无效引用
+
+
+```
+Program
+├── inst_layout: Vec<Value>           // 全局变量布局
+├── func_layout: Vec<Function>        // 函数布局
+├── values: HashMap<Value, ValueData> // 全局值
+└── funcs: HashMap<Function, FunctionData> // 函数数据
+
+FunctionData
+├── name: String                      // 函数名 (@main)
+├── params: Vec<Value>                // 参数列表
+├── ty: Type                          // 函数类型
+├── dfg: DataFlowGraph                // 数据流图
+│   ├── values: HashMap<Value, ValueData>  // 局部值
+│   └── bbs: HashMap<BasicBlock, BasicBlockData> // 基本块
+└── layout: Layout                    // 布局
+    └── bbs: LinkedList<BasicBlock>   // 基本块顺序
+        └── insts: LinkedList<Value>  // 指令顺序
+```
 
 ```
 Program
@@ -74,6 +96,36 @@ Value (值)
         └── Return        - 函数返回
 ```
 
+```rust
+pub enum ValueKind {
+  // 常量
+  Integer(Integer),       // 整数常量
+  ZeroInit(ZeroInit),     // 零初始化
+  Aggregate(Aggregate),   // 聚合常量
+  
+  // 内存操作
+  Alloc(Alloc),           // 栈分配
+  GlobalAlloc(GlobalAlloc), // 全局分配
+  Load(Load),             // 加载
+  Store(Store),           // 存储
+  GetPtr(GetPtr),         // 指针偏移
+  GetElemPtr(GetElemPtr), // 数组元素指针
+  
+  // 计算
+  Binary(Binary),         // 二元运算
+  
+  // 控制流
+  Branch(Branch),         // 条件分支
+  Jump(Jump),             // 无条件跳转
+  Call(Call),             // 函数调用
+  Return(Return),         // 返回
+  
+  // 其他
+  FuncArgRef(FuncArgRef), // 函数参数引用
+  BlockArgRef(BlockArgRef), // 基本块参数引用
+}
+```
+
 `Program`: 程序的顶层结构
 `FunctionData`: 函数的完整定义
 `BasicBlockData`: 基本块的数据
@@ -87,8 +139,6 @@ Builder Traits
 ├── GlobalInstBuilder    - 构建全局指令
 ├── LocalInstBuilder     - 构建局部指令
 └── BasicBlockBuilder    - 构建基本块
-```
-
 ```
 
 顺序要求:
@@ -110,25 +160,6 @@ Builder Traits
 指令的数据被统一存放在函数内的一个叫做 DataFlowGraph 的结构中, 同时每个指令具有一个指令 ID (或者也可以叫 handle), 你可以通过 ID 在这个结构中获取对应的指令. 指令的列表中存放的其实是指令的 ID.
 
 ---
-```
-Program
-  全局变量列表:
-    Value 1.
-    Value 2.
-    ...
-  函数列表:
-    Function 1.
-      基本块列表:
-        BasicBlock 1.
-          指令列表:
-            Value 1.
-            Value 2.
-        BasicBlock 2.
-        ...
-    Function 2.
-    ...
-```
-
 `Value` 的种类:
 - **各类常量**: 整数常量 (Integer), 零初始化器 (ZeroInit), 等等.
 - **参数引用**: 函数参数引用 (FuncArgRef) 等, 用来指代传入的参数.
@@ -142,5 +173,4 @@ Program
 
 Koopa IR 里的规定, **Function**, **BasicBlock**, **Value** 的名字必须以 **@** 或者 **%** 开头. 前者表示这是一个 "具名符号", 后者表示这是一个 "临时符号".
 > 这两者其实没有任何区别, 但我们通常用前者表示 SysY 里出现的符号, 用后者表示你的编译器在生成 IR 的时候生成的符号.
-
 
