@@ -1,4 +1,4 @@
-pub enum Instr {
+pub enum RVInst {
     Raw(String),
     Li {
         rd: &'static str,
@@ -10,6 +10,10 @@ pub enum Instr {
         rs2: &'static str,
     },
     Seqz {
+        rd: &'static str,
+        rs: &'static str,
+    },
+    Snez {
         rd: &'static str,
         rs: &'static str,
     },
@@ -38,27 +42,63 @@ pub enum Instr {
         rs1: &'static str,
         rs2: &'static str,
     },
+    Div {
+        rd: &'static str,
+        rs1: &'static str,
+        rs2: &'static str,
+    },
+    Rem {
+        rd: &'static str,
+        rs1: &'static str,
+        rs2: &'static str,
+    },
     Sgt {
+        rd: &'static str,
+        rs1: &'static str,
+        rs2: &'static str,
+    },
+    Slt {
+        rd: &'static str,
+        rs1: &'static str,
+        rs2: &'static str,
+    },
+    And {
+        rd: &'static str,
+        rs1: &'static str,
+        rs2: &'static str,
+    },
+    Or {
         rd: &'static str,
         rs1: &'static str,
         rs2: &'static str,
     },
 }
 
-impl Instr {
+impl RVInst {
     pub fn to_asm(&self) -> String {
         match self {
-            Instr::Raw(s) => s.clone(),
-            Instr::Li { rd, imm12 } => format!("li {}, {}", rd, imm12),
-            Instr::Xor { rd, rs1, rs2 } => format!("xor {}, {}, {}", rd, rs1, rs2),
-            Instr::Seqz { rd, rs } => format!("seqz {}, {}", rd, rs),
-            Instr::Sub { rd, rs1, rs2 } => format!("sub {}, {}, {}", rd, rs1, rs2),
-            Instr::Add { rd, rs1, rs2 } => format!("add {}, {}, {}", rd, rs1, rs2),
-            Instr::Addi { rd, rs1, imm12 } => format!("addi {}, {}, {}", rd, rs1, imm12),
-            Instr::Ret => "ret".to_string(),
-            Instr::Mv { rd, rs } => format!("mv {}, {}", rd, rs),
-            Instr::Mul { rd, rs1, rs2 } => format!("mul {}, {}, {}", rd, rs1, rs2),
-            Instr::Sgt { rd, rs1, rs2 } => format!("sgt {}, {}, {}", rd, rs1, rs2),
+            RVInst::Raw(s) => s.clone(),
+            RVInst::Li { rd, imm12 } => format!("li {}, {}", rd, imm12),
+            RVInst::Xor { rd, rs1, rs2 } => format!("xor {}, {}, {}", rd, rs1, rs2),
+            RVInst::Seqz { rd, rs } => format!("seqz {}, {}", rd, rs),
+            RVInst::Snez { rd, rs } => format!("snez {}, {}", rd, rs),
+            RVInst::Sub { rd, rs1, rs2 } => format!("sub {}, {}, {}", rd, rs1, rs2),
+            RVInst::Add { rd, rs1, rs2 } => format!("add {}, {}, {}", rd, rs1, rs2),
+            RVInst::Addi { rd, rs1, imm12 } => format!("addi {}, {}, {}", rd, rs1, imm12),
+            RVInst::Ret => "ret".to_string(),
+            RVInst::Mv { rd, rs } => format!("mv {}, {}", rd, rs),
+            RVInst::Mul { rd, rs1, rs2 } => format!("mul {}, {}, {}", rd, rs1, rs2),
+            RVInst::Div { rd, rs1, rs2 } => format!("div {}, {}, {}", rd, rs1, rs2),
+            RVInst::Rem { rd, rs1, rs2 } => format!("rem {}, {}, {}", rd, rs1, rs2),
+            RVInst::Sgt { rd, rs1, rs2 } => format!("sgt {}, {}, {}", rd, rs1, rs2),
+            RVInst::Slt { rd, rs1, rs2 } => format!("slt {}, {}, {}", rd, rs1, rs2),
+            RVInst::And { rd, rs1, rs2 } => format!("and {}, {}, {}", rd, rs1, rs2),
+            RVInst::Or { rd, rs1, rs2 } => format!("or {}, {}, {}", rd, rs1, rs2),
         }
+    }
+
+    pub fn to_asm_indent2(&self) -> String {
+        let asm = self.to_asm();
+        format!("  {}", asm)
     }
 }

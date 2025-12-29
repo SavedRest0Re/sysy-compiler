@@ -22,6 +22,7 @@ fn main() -> Result<(), Error> {
     let output = args.next().unwrap();
 
     let input = read_to_string(input).map_err(Error::Io)?;
+    dbg!(&input);
 
     let ast = sysy::CompUnitParser::new().parse(&input).unwrap();
     println!("{:#?}", ast);

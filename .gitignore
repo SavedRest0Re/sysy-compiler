@@ -2,3 +2,5 @@
 
 examples/fixtures/*.koopa
 examples/fixtures/*.riscv
+
+*.log
