@@ -123,4 +123,15 @@ impl<'a> Ctx<'a> {
     pub fn cur_value(&self) -> Option<Value> {
         self.cur_value
     }
+
+    pub fn with_value<F, R>(&mut self, value: Value, f: F) -> R
+    where
+        F: FnOnce(&mut Self) -> R,
+    {
+        let saved = self.cur_value;
+        self.set_cur_value(value);
+        let result = f(self);
+        self.cur_value = saved;
+        result
+    }
 }

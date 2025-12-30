@@ -89,7 +89,7 @@ impl AsmGen for BasicBlockNode {
 
 // koopa IR 中的 "虚拟寄存器" 使用 `Value` 来表示, Value 也是一条指令的 handle.
 
-// TODO: 基于 Value 来 DFS 而不是 ValueData. 不用那么多 Saved-Restore
+// TODO: 考虑 `impl AsmGen for Value` 而不是 ValueData. 不用那么多 Saved-Restore
 impl AsmGen for ValueData {
     type Output = ();
 
@@ -121,20 +121,12 @@ impl AsmGen for ValueData {
                 // Generate asm for lhs
                 let lhs_v = binary.lhs();
                 let lhs_data = ctx.func_data().dfg().value(lhs_v).clone();
-                // save the current value before DFS.
-                let saved_value = ctx.cur_value().unwrap();
-                ctx.set_cur_value(lhs_v);
-                lhs_data.generate(ctx, buf)?;
-                ctx.set_cur_value(saved_value);
+                ctx.with_value(lhs_v, |ctx| lhs_data.generate(ctx, buf))?;
 
                 // Generate asm for rhs
                 let rhs_v = binary.rhs();
                 let rhs_data = ctx.func_data().dfg().value(rhs_v).clone();
-                // save the current value before DFS.
-                let saved_value = ctx.cur_value().unwrap();
-                ctx.set_cur_value(rhs_v);
-                rhs_data.generate(ctx, buf)?;
-                ctx.set_cur_value(saved_value);
+                ctx.with_value(rhs_v, |ctx| rhs_data.generate(ctx, buf))?;
 
                 let lhs_reg = query_reg_by_value!(ctx, lhs_v);
                 let rhs_reg = query_reg_by_value!(ctx, rhs_v);
@@ -360,12 +352,7 @@ impl AsmGen for ValueData {
             ValueKind::Return(ret) => {
                 if let Some(retval) = ret.value() {
                     let retval_data = ctx.func_data().dfg().value(retval).clone();
-
-                    // save the current value before DFS.
-                    let saved_value = ctx.cur_value().unwrap();
-                    ctx.set_cur_value(retval);
-                    retval_data.generate(ctx, buf)?;
-                    ctx.set_cur_value(saved_value);
+                    ctx.with_value(retval, |ctx| retval_data.generate(ctx, buf))?;
 
                     let ret_reg = query_reg_by_value!(ctx, retval);
 
