@@ -4,6 +4,51 @@ pub struct CompUnit {
 }
 
 #[derive(Debug)]
+pub enum Decl {
+    Const(ConstDecl),
+    Var(VarDecl),
+}
+
+#[derive(Debug)]
+pub struct ConstDecl {
+    pub btype: BType,
+    pub const_defs: Vec<ConstDef>,
+}
+
+#[derive(Debug, Clone)]
+pub enum BType {
+    Int,
+}
+
+#[derive(Debug)]
+pub struct ConstDef {
+    pub ident: String,
+    pub init_val: ConstInitVal,
+}
+
+#[derive(Debug)]
+pub enum ConstInitVal {
+    ConstExp(ConstExp),
+}
+
+#[derive(Debug)]
+pub struct VarDecl {
+    pub btype: BType,
+    pub defs: Vec<VarDef>,
+}
+
+#[derive(Debug)]
+pub struct VarDef {
+    pub ident: String,
+    pub init_val: Option<InitVal>,
+}
+
+#[derive(Debug)]
+pub enum InitVal {
+    Exp(Exp),
+}
+
+#[derive(Debug)]
 pub struct FuncDef {
     pub ret_ty: FuncType,
     pub ident: String,
@@ -17,12 +62,19 @@ pub enum FuncType {
 
 #[derive(Debug)]
 pub struct Block {
-    pub stmt: Stmt,
+    pub items: Vec<BlockItem>,
 }
 
 #[derive(Debug)]
-pub struct Stmt {
-    pub exp: Exp,
+pub enum BlockItem {
+    Decl(Decl),
+    Stmt(Stmt),
+}
+
+#[derive(Debug)]
+pub enum Stmt {
+    Assign(LVal, Exp),
+    Return(Exp),
 }
 
 #[derive(Debug)]
@@ -31,39 +83,15 @@ pub enum Exp {
 }
 
 #[derive(Debug)]
-pub enum LOrExp {
-    LAnd(LAndExp),
-    LOrLAnd(Box<LOrExp>, LAndExp),
+pub enum LVal {
+    Ident(String),
 }
 
 #[derive(Debug)]
-pub enum LAndExp {
-    Eq(EqExp),
-    LAndEq(Box<LAndExp>, EqExp),
-}
-
-#[derive(Debug)]
-pub enum EqExp {
-    Rel(RelExp),
-    EqRel(Box<EqExp>, EqOp, RelExp),
-}
-
-#[derive(Debug)]
-pub enum RelExp {
-    Add(AddExp),
-    RelAdd(Box<RelExp>, RelOp, AddExp),
-}
-
-#[derive(Debug)]
-pub enum AddExp {
-    Mul(MulExp),
-    AddMul(Box<AddExp>, AddOp, MulExp),
-}
-
-#[derive(Debug)]
-pub enum MulExp {
-    Unary(UnaryExp),
-    MulUnary(Box<MulExp>, MulOp, UnaryExp),
+pub enum PrimaryExp {
+    Paren(Box<Exp>),
+    LVal(LVal),
+    Number(i32),
 }
 
 #[derive(Debug)]
@@ -73,18 +101,53 @@ pub enum UnaryExp {
 }
 
 #[derive(Debug)]
-pub enum PrimaryExp {
-    Number(i32),
-    Paren(Box<Exp>),
+pub enum MulExp {
+    Unary(UnaryExp),
+    MulUnary(Box<MulExp>, MulOp, UnaryExp),
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug)]
+pub enum AddExp {
+    Mul(MulExp),
+    AddMul(Box<AddExp>, AddOp, MulExp),
+}
+
+#[derive(Debug)]
+pub enum RelExp {
+    Add(AddExp),
+    RelAdd(Box<RelExp>, RelOp, AddExp),
+}
+
+#[derive(Debug)]
+pub enum EqExp {
+    Rel(RelExp),
+    EqRel(Box<EqExp>, EqOp, RelExp),
+}
+
+#[derive(Debug)]
+pub enum LAndExp {
+    Eq(EqExp),
+    LAndEq(Box<LAndExp>, EqExp),
+}
+
+#[derive(Debug)]
+pub enum LOrExp {
+    LAnd(LAndExp),
+    LOrLAnd(Box<LOrExp>, LAndExp),
+}
+
+#[derive(Debug)]
+pub struct ConstExp {
+    pub exp: Exp,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum EqOp {
     Eq,
     Ne,
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RelOp {
     Lt,
     Gt,
@@ -92,7 +155,7 @@ pub enum RelOp {
     Ge,
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AddOp {
     Add,
     Sub,

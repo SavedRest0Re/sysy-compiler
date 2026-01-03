@@ -19,8 +19,8 @@ build:
 # Local testing with Docker
 testkoopa:
 	docker run -it --rm -v $(shell pwd):/root/compiler maxxing/compiler-dev \
-		autotest -koopa -s lv3 /root/compiler
+		autotest -koopa -s lv4 /root/compiler
 
 testriscv:
 	docker run -it --rm -v $(shell pwd):/root/compiler maxxing/compiler-dev \
-		autotest -riscv -s lv3 /root/compiler
+		autotest -riscv -s lv4 /root/compiler

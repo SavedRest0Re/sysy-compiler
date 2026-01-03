@@ -10,57 +10,116 @@ match {
   _
 }
 
+// CompUnit ::= FuncDef;
 pub CompUnit: CompUnit = <func_def: FuncDef> => CompUnit { func_def };
 
+// Decl ::= ConstDecl | VarDecl;
+Decl: Decl = {
+  <const_decl: ConstDecl> => Decl::Const(const_decl),
+  <var_decl: VarDecl> => Decl::Var(var_decl),
+};
+
+// ConstDecl ::= "const" BType ConstDef {"," ConstDef} ";";
+ConstDecl: ConstDecl = {
+  "const" <btype: BType> <const_def: ConstDef> <cds: ("," <ConstDef>)*> ";" => {
+    let mut const_defs = vec![const_def];
+    const_defs.extend(cds);
+    ConstDecl { btype, const_defs }
+  }
+};
+
+// BType ::= "int";
+BType: BType = {
+  "int" => BType::Int,
+};
+
+// ConstDef ::= Ident "=" ConstInitVal;
+ConstDef: ConstDef = {
+  <id: Ident> "=" <init_val: ConstInitVal> => ConstDef { ident: id, init_val },
+};
+
+// ConstInitVal ::= ConstExp;
+ConstInitVal: ConstInitVal = {
+  <exp: ConstExp> => ConstInitVal::ConstExp(exp),
+};
+
+// VarDecl ::= BType VarDef {"," VarDef} ";";
+VarDecl: VarDecl = {
+  <btype: BType> <var_def: VarDef> <vds: ("," <VarDef>)*> ";" => {
+    let mut defs = vec![var_def];
+    defs.extend(vds);
+    VarDecl { btype, defs }
+  }
+};
+
+// VarDef ::= IDENT | IDENT "=" InitVal;
+VarDef: VarDef = {
+  <id: Ident> => VarDef { ident: id, init_val: None },
+  <id: Ident> "=" <init_val: InitVal> => VarDef { ident: id, init_val: Some(init_val) },
+};
+
+// InitVal ::= Exp;
+InitVal: InitVal = {
+  <exp: Exp> => InitVal::Exp(exp),
+};
+
+// FuncDef ::= FuncType Ident "(" ")" Block
 FuncDef: FuncDef = {
   <ret_ty: FuncType> <id: Ident> "(" ")" <block: Block> => {
     FuncDef { ret_ty, ident: id, block }
   }
 }
 
+// FuncType ::= "int";
 FuncType: FuncType = "int" => FuncType::Int;
 
-Block: Block = "{" <stmt: Stmt> "}" => Block { stmt };
+// Block ::= "{" {BlockItem} "}";
+Block: Block = {
+  "{" <items: (BlockItem)*> "}" => Block { items },
+}
 
-Stmt: Stmt = "return" <exp: Exp> ";" => Stmt { exp };
+// BlockItem ::= Decl | Stmt;
+BlockItem: BlockItem = {
+  <decl: Decl> => BlockItem::Decl(decl),
+  <stmt: Stmt> => BlockItem::Stmt(stmt),
+};
+
+// Stmt ::= LVal "=" Exp ";" | "return" Exp ";";
+Stmt: Stmt = {
+  <lval: LVal> "=" <exp: Exp> ";" => Stmt::Assign(lval, exp),
+  "return" <exp: Exp> ";" => Stmt::Return(exp),
+};
 
 // Exp ::= LOrExp;
 Exp: Exp = {
   <exp: LOrExp> => Exp::LOr(exp),
 };
 
-// LOrExp ::= LAndExp | LOrExp "||" LAndExp;
-LOrExp: LOrExp = {
-  <land: LAndExp> => LOrExp::LAnd(land),
-  <l: LOrExp> "||" <r: LAndExp> => LOrExp::LOrLAnd(
-    Box::new(l),
-    r,
-  ),
+// LVal ::= IDENT;
+LVal: LVal = {
+  <id: Ident> => LVal::Ident(id),
 };
 
-// LAndExp ::= EqExp | LAndExp "&&" EqExp;
-LAndExp: LAndExp = {
-  <eq: EqExp> => LAndExp::Eq(eq),
-  <l: LAndExp> "&&" <r: EqExp> => LAndExp::LAndEq(
-    Box::new(l),
-    r,
-  ),
+// PrimaryExp ::= "(" Exp ")" | LVal | Number;
+PrimaryExp: PrimaryExp = {
+  <num: Number> => PrimaryExp::Number(num),
+  <lval: LVal> => PrimaryExp::LVal(lval),
+  "(" <exp: Exp> ")" => PrimaryExp::Paren(Box::new(exp)),
 };
 
-// EqExp ::= RelExp | EqExp ("==" | "!=") RelExp;
-EqExp: EqExp = {
-  <exp: RelExp> => EqExp::Rel(exp),
-  <l: EqExp> <op: EqOp> <r: RelExp> => EqExp::EqRel(
-    Box::new(l),
+// UnaryExp ::= PrimaryExp | UnaryOp UnaryExp
+UnaryExp: UnaryExp = {
+  <exp: PrimaryExp> => UnaryExp::PrimaryExp(exp),
+  <op: UnaryOp> <exp: UnaryExp> => UnaryExp::Unary(
     op,
-    r
-  )
+    Box::new(exp),
+  ),
 };
 
-// RelExp ::= AddExp | RelExp ("<" | "<=" | ">" | ">=") AddExp;
-RelExp: RelExp = {
-  <exp: AddExp> => RelExp::Add(exp),
-  <l: RelExp> <op: RelOp> <r: AddExp> => RelExp::RelAdd(
+// MulExp ::= UnaryExp | MulExp ("*" | "/" | "%") UnaryExp;
+MulExp: MulExp = {
+  <exp: UnaryExp> => MulExp::Unary(exp),
+  <l: MulExp> <op: MulOp> <r: UnaryExp> => MulExp::MulUnary(
     Box::new(l),
     op,
     r,
@@ -77,30 +136,49 @@ AddExp: AddExp = {
   ),
 };
 
-// MulExp ::= UnaryExp | MulExp ("*" | "/" | "%") UnaryExp;
-MulExp: MulExp = {
-  <exp: UnaryExp> => MulExp::Unary(exp),
-  <l: MulExp> <op: MulOp> <r: UnaryExp> => MulExp::MulUnary(
+// RelExp ::= AddExp | RelExp ("<" | "<=" | ">" | ">=") AddExp;
+RelExp: RelExp = {
+  <exp: AddExp> => RelExp::Add(exp),
+  <l: RelExp> <op: RelOp> <r: AddExp> => RelExp::RelAdd(
     Box::new(l),
     op,
     r,
   ),
 };
 
-// UnaryExp ::= PrimaryExp | UnaryOp UnaryExp
-UnaryExp: UnaryExp = {
-  <exp: PrimaryExp> => UnaryExp::PrimaryExp(exp),
-  <op: UnaryOp> <exp: UnaryExp> => UnaryExp::Unary(
+// EqExp ::= RelExp | EqExp ("==" | "!=") RelExp;
+EqExp: EqExp = {
+  <exp: RelExp> => EqExp::Rel(exp),
+  <l: EqExp> <op: EqOp> <r: RelExp> => EqExp::EqRel(
+    Box::new(l),
     op,
-    Box::new(exp),
+    r
+  )
+};
+
+// LAndExp ::= EqExp | LAndExp "&&" EqExp;
+LAndExp: LAndExp = {
+  <eq: EqExp> => LAndExp::Eq(eq),
+  <l: LAndExp> "&&" <r: EqExp> => LAndExp::LAndEq(
+    Box::new(l),
+    r,
   ),
 };
 
-// PrimaryExp ::= "(" Exp ")" | Number;
-PrimaryExp: PrimaryExp = {
-  <num: Number> => PrimaryExp::Number(num),
-  "(" <exp: Exp> ")" => PrimaryExp::Paren(Box::new(exp)),
+// LOrExp ::= LAndExp | LOrExp "||" LAndExp;
+LOrExp: LOrExp = {
+  <land: LAndExp> => LOrExp::LAnd(land),
+  <l: LOrExp> "||" <r: LAndExp> => LOrExp::LOrLAnd(
+    Box::new(l),
+    r,
+  ),
 };
+
+// ConstExp ::= Exp;
+ConstExp: ConstExp = {
+  <exp: Exp> => ConstExp { exp },
+}
+
 
 UnaryOp: UnaryOp = {
   "+" => UnaryOp::Plus,

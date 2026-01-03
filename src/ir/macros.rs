@@ -44,3 +44,10 @@ macro_rules! extend_insts {
         $func.layout_mut().bb_mut($bb).insts_mut().extend($insts)
     };
 }
+
+#[macro_export]
+macro_rules! entry_bb {
+    ($ctx:expr) => {
+        $ctx.func_data().layout().entry_bb().unwrap()
+    };
+}

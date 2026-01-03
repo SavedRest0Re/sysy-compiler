@@ -1,3 +1,4 @@
+mod const_eval;
 mod ctx;
 mod generate;
 pub mod macros;
