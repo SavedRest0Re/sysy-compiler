@@ -1,3 +1,5 @@
+use koopa::ir::BinaryOp;
+
 #[derive(Debug)]
 pub struct CompUnit {
     pub func_def: FuncDef,
@@ -175,4 +177,43 @@ pub enum UnaryOp {
     Plus,
     Minus,
     Not,
+}
+
+impl From<AddOp> for BinaryOp {
+    fn from(op: AddOp) -> Self {
+        match op {
+            AddOp::Add => BinaryOp::Add,
+            AddOp::Sub => BinaryOp::Sub,
+        }
+    }
+}
+
+impl From<MulOp> for BinaryOp {
+    fn from(op: MulOp) -> Self {
+        match op {
+            MulOp::Mul => BinaryOp::Mul,
+            MulOp::Div => BinaryOp::Div,
+            MulOp::Mod => BinaryOp::Mod,
+        }
+    }
+}
+
+impl From<RelOp> for BinaryOp {
+    fn from(op: RelOp) -> Self {
+        match op {
+            RelOp::Lt => BinaryOp::Lt,
+            RelOp::Gt => BinaryOp::Gt,
+            RelOp::Le => BinaryOp::Le,
+            RelOp::Ge => BinaryOp::Ge,
+        }
+    }
+}
+
+impl From<EqOp> for BinaryOp {
+    fn from(op: EqOp) -> Self {
+        match op {
+            EqOp::Eq => BinaryOp::Eq,
+            EqOp::Ne => BinaryOp::NotEq,
+        }
+    }
 }

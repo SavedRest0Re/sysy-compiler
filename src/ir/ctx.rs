@@ -1,6 +1,9 @@
 use std::collections::HashMap;
 
-use koopa::ir::{Function, FunctionData, Program, Value};
+use koopa::ir::{
+    BasicBlock, BinaryOp, Function, FunctionData, Program, Type, Value,
+    builder::{BasicBlockBuilder, LocalInstBuilder, ValueBuilder},
+};
 
 use crate::ir::{Error, IRResult};
 
@@ -45,6 +48,8 @@ impl SymbolTable {
 pub struct Ctx {
     pub program: Program,
     pub cur_func: Option<Function>,
+    cur_bb: Option<BasicBlock>,
+
     pub symbol_table: SymbolTable,
     counter: u32,
 }
@@ -54,6 +59,7 @@ impl Ctx {
         Self {
             program: Program::new(),
             cur_func: None,
+            cur_bb: None,
             symbol_table: SymbolTable::new(),
             counter: 0,
         }
@@ -65,8 +71,10 @@ impl Ctx {
 
     pub fn unset_cur_func(&mut self) {
         self.cur_func = None;
+        self.cur_bb = None;
     }
 
+    #[allow(dead_code)]
     pub fn func_data(&self) -> &FunctionData {
         self.program.func(self.cur_func.unwrap())
     }
@@ -79,5 +87,80 @@ impl Ctx {
         let name = format!("@{}_{}", ident, self.counter);
         self.counter += 1;
         name
+    }
+
+    pub fn cur_bb(&self) -> BasicBlock {
+        self.cur_bb.expect("no current basic block")
+    }
+
+    pub fn set_cur_bb(&mut self, bb: BasicBlock) {
+        self.cur_bb = Some(bb);
+    }
+
+    pub fn create_bb(&mut self, name: Option<&str>) -> BasicBlock {
+        let bb = self
+            .func_data_mut()
+            .dfg_mut()
+            .new_bb()
+            .basic_block(name.map(|s| s.to_string()));
+        self.func_data_mut()
+            .layout_mut()
+            .bbs_mut()
+            .push_key_back(bb)
+            .unwrap();
+        bb
+    }
+
+    // ========== Instruction Emission ==========
+    pub fn emit_integer(&mut self, value: i32) -> Value {
+        self.func_data_mut().dfg_mut().new_value().integer(value)
+    }
+
+    pub fn emit_binary(&mut self, op: BinaryOp, lhs: Value, rhs: Value) -> Value {
+        let inst = self
+            .func_data_mut()
+            .dfg_mut()
+            .new_value()
+            .binary(op, lhs, rhs);
+        self.add_inst(inst);
+        inst
+    }
+
+    pub fn emit_load(&mut self, ptr: Value) -> Value {
+        let inst = self.func_data_mut().dfg_mut().new_value().load(ptr);
+        self.add_inst(inst);
+        inst
+    }
+
+    pub fn emit_store(&mut self, value: Value, ptr: Value) {
+        let inst = self.func_data_mut().dfg_mut().new_value().store(value, ptr);
+        self.add_inst(inst);
+    }
+
+    pub fn emit_ret(&mut self, value: Option<Value>) {
+        let inst = self.func_data_mut().dfg_mut().new_value().ret(value);
+        self.add_inst(inst);
+    }
+
+    pub fn emit_alloc(&mut self, ty: Type) -> Value {
+        let inst = self.func_data_mut().dfg_mut().new_value().alloc(ty);
+        self.add_inst(inst);
+        inst
+    }
+
+    pub fn set_value_name(&mut self, value: Value, name: String) {
+        self.func_data_mut()
+            .dfg_mut()
+            .set_value_name(value, Some(name));
+    }
+
+    fn add_inst(&mut self, inst: Value) {
+        let bb = self.cur_bb();
+        self.func_data_mut()
+            .layout_mut()
+            .bb_mut(bb)
+            .insts_mut()
+            .push_key_back(inst)
+            .unwrap();
     }
 }

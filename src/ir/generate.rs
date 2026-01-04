@@ -1,22 +1,16 @@
-use koopa::ir::{
-    BinaryOp, FunctionData, Type, Value,
-    builder::{BasicBlockBuilder, LocalInstBuilder, ValueBuilder},
-};
+use koopa::ir::{BinaryOp, FunctionData, Type, Value};
 
 use crate::{
-    add_bb, add_inst,
     ast::{
-        AddExp, AddOp, Block, BlockItem, CompUnit, ConstDef, ConstInitVal, Decl, EqExp, EqOp, Exp,
-        FuncDef, FuncType, InitVal, LAndExp, LOrExp, LVal, MulExp, MulOp, PrimaryExp, RelExp,
-        RelOp, Stmt, UnaryExp, UnaryOp, VarDef,
+        AddExp, Block, BlockItem, CompUnit, ConstDef, ConstInitVal, Decl, EqExp, Exp, FuncDef,
+        FuncType, InitVal, LAndExp, LOrExp, LVal, MulExp, PrimaryExp, RelExp, Stmt, UnaryExp,
+        UnaryOp, VarDef,
     },
-    entry_bb,
     ir::{
         Error, IRResult,
         const_eval::consteval,
         ctx::{Ctx, Symbol},
     },
-    new_bb, new_value,
 };
 
 pub trait IRGen {
@@ -45,8 +39,9 @@ impl IRGen for FuncDef {
 
         ctx.set_cur_func(func);
 
-        let entry_bb = new_bb!(ctx.func_data_mut()).basic_block(Some("%entry".into()));
-        add_bb!(ctx.func_data_mut(), entry_bb);
+        // Create entry basic block and set it as current
+        let entry_bb = ctx.create_bb(Some("%entry"));
+        ctx.set_cur_bb(entry_bb);
 
         self.block.generate(ctx)?;
 
@@ -88,8 +83,6 @@ impl IRGen for Stmt {
     fn generate(&self, ctx: &mut Ctx) -> IRResult<Self::Output> {
         match self {
             Stmt::Assign(lval, exp) => {
-                let entry_bb = entry_bb!(ctx);
-
                 let rhs_value = exp.generate(ctx)?;
 
                 let LVal::Ident(ident) = lval;
@@ -102,15 +95,11 @@ impl IRGen for Stmt {
                     None => panic!("undefined: \"{}\"", ident),
                 };
 
-                let store_inst = new_value!(ctx.func_data_mut()).store(rhs_value, var);
-                add_inst!(ctx.func_data_mut(), entry_bb, store_inst);
+                ctx.emit_store(rhs_value, var);
             }
             Stmt::Return(exp) => {
-                let entry_bb = entry_bb!(ctx);
-
                 let result = exp.generate(ctx)?;
-                let ret_inst = new_value!(ctx.func_data_mut()).ret(Some(result));
-                add_inst!(ctx.func_data_mut(), entry_bb, ret_inst);
+                ctx.emit_ret(Some(result));
             }
             Stmt::Exp(exp) => {
                 if let Some(exp) = exp {
@@ -160,7 +149,7 @@ impl IRGen for ConstInitVal {
 
     fn generate(&self, ctx: &mut Ctx) -> IRResult<Self::Output> {
         let ConstInitVal::ConstExp(const_exp) = self;
-        Ok(consteval(const_exp, ctx))
+        Ok(consteval(const_exp, ctx)?)
     }
 }
 
@@ -168,25 +157,18 @@ impl IRGen for VarDef {
     type Output = ();
 
     fn generate(&self, ctx: &mut Ctx) -> IRResult<Self::Output> {
-        let entry_bb = entry_bb!(ctx);
-
-        let var_alloc_inst = new_value!(ctx.func_data_mut()).alloc(Type::get_i32()); // BType must be i32
+        let var_alloc = ctx.emit_alloc(Type::get_i32()); // BType must be i32
         let unique_name = ctx.unique_name(&self.ident);
-        ctx.func_data_mut()
-            .dfg_mut()
-            .set_value_name(var_alloc_inst, Some(unique_name));
-        add_inst!(ctx.func_data_mut(), entry_bb, var_alloc_inst);
+        ctx.set_value_name(var_alloc, unique_name);
 
         if let Some(ref init_val) = self.init_val {
             let InitVal::Exp(exp) = init_val;
-
             let init_value = exp.generate(ctx)?;
-            let store_inst = new_value!(ctx.func_data_mut()).store(init_value, var_alloc_inst);
-            add_inst!(ctx.func_data_mut(), entry_bb, store_inst);
+            ctx.emit_store(init_value, var_alloc);
         }
 
         ctx.symbol_table
-            .define(self.ident.clone(), Symbol::Var(var_alloc_inst))?;
+            .define(self.ident.clone(), Symbol::Var(var_alloc))?;
 
         Ok(())
     }
@@ -212,18 +194,11 @@ impl IRGen for LOrExp {
                 let lval = l.generate(ctx)?;
                 let rval = r.generate(ctx)?;
 
-                // l || r => (l != 0) || (r != 0)
-                let entry_bb = entry_bb!(ctx);
-                let zero = new_value!(ctx.func_data_mut()).integer(0);
-
-                let lnez = new_value!(ctx.func_data_mut()).binary(BinaryOp::NotEq, lval, zero);
-                add_inst!(ctx.func_data_mut(), entry_bb, lnez);
-
-                let rnez = new_value!(ctx.func_data_mut()).binary(BinaryOp::NotEq, rval, zero);
-                add_inst!(ctx.func_data_mut(), entry_bb, rnez);
-
-                let or_inst = new_value!(ctx.func_data_mut()).binary(BinaryOp::Or, lnez, rnez);
-                add_inst!(ctx.func_data_mut(), entry_bb, or_inst);
+                // l || r => (l != 0) | (r != 0)
+                let zero = ctx.emit_integer(0);
+                let lnez = ctx.emit_binary(BinaryOp::NotEq, lval, zero);
+                let rnez = ctx.emit_binary(BinaryOp::NotEq, rval, zero);
+                let or_inst = ctx.emit_binary(BinaryOp::Or, lnez, rnez);
 
                 Ok(or_inst)
             }
@@ -241,18 +216,11 @@ impl IRGen for LAndExp {
                 let l_val = l.generate(ctx)?;
                 let r_val = r.generate(ctx)?;
 
-                // l && r => (l != 0) && (r != 0)
-                let entry_bb = entry_bb!(ctx);
-                let zero = new_value!(ctx.func_data_mut()).integer(0);
-
-                let lnez = new_value!(ctx.func_data_mut()).binary(BinaryOp::NotEq, l_val, zero);
-                add_inst!(ctx.func_data_mut(), entry_bb, lnez);
-
-                let rnez = new_value!(ctx.func_data_mut()).binary(BinaryOp::NotEq, r_val, zero);
-                add_inst!(ctx.func_data_mut(), entry_bb, rnez);
-
-                let and_inst = new_value!(ctx.func_data_mut()).binary(BinaryOp::And, lnez, rnez);
-                add_inst!(ctx.func_data_mut(), entry_bb, and_inst);
+                // l && r => (l != 0) & (r != 0)
+                let zero = ctx.emit_integer(0);
+                let lnez = ctx.emit_binary(BinaryOp::NotEq, l_val, zero);
+                let rnez = ctx.emit_binary(BinaryOp::NotEq, r_val, zero);
+                let and_inst = ctx.emit_binary(BinaryOp::And, lnez, rnez);
 
                 Ok(and_inst)
             }
@@ -269,17 +237,7 @@ impl IRGen for EqExp {
             EqExp::EqRel(l, eq_op, r) => {
                 let l_val = l.generate(ctx)?;
                 let r_val = r.generate(ctx)?;
-
-                let op = match eq_op {
-                    EqOp::Eq => BinaryOp::Eq,
-                    EqOp::Ne => BinaryOp::NotEq,
-                };
-
-                let entry_bb = entry_bb!(ctx);
-                let eq_inst = new_value!(ctx.func_data_mut()).binary(op, l_val, r_val);
-                add_inst!(ctx.func_data_mut(), entry_bb, eq_inst);
-
-                Ok(eq_inst)
+                Ok(ctx.emit_binary((*eq_op).into(), l_val, r_val))
             }
         }
     }
@@ -294,19 +252,7 @@ impl IRGen for RelExp {
             RelExp::RelAdd(l, rel_op, r) => {
                 let l_val = l.generate(ctx)?;
                 let r_val = r.generate(ctx)?;
-
-                let op = match rel_op {
-                    RelOp::Lt => BinaryOp::Lt,
-                    RelOp::Gt => BinaryOp::Gt,
-                    RelOp::Le => BinaryOp::Le,
-                    RelOp::Ge => BinaryOp::Ge,
-                };
-
-                let entry_bb = entry_bb!(ctx);
-                let rel_inst = new_value!(ctx.func_data_mut()).binary(op, l_val, r_val);
-                add_inst!(ctx.func_data_mut(), entry_bb, rel_inst);
-
-                Ok(rel_inst)
+                Ok(ctx.emit_binary((*rel_op).into(), l_val, r_val))
             }
         }
     }
@@ -321,17 +267,7 @@ impl IRGen for AddExp {
             AddExp::AddMul(l, add_op, r) => {
                 let l_val = l.generate(ctx)?;
                 let r_val = r.generate(ctx)?;
-
-                let op = match add_op {
-                    AddOp::Add => BinaryOp::Add,
-                    AddOp::Sub => BinaryOp::Sub,
-                };
-
-                let entry_bb = entry_bb!(ctx);
-                let add_inst = new_value!(ctx.func_data_mut()).binary(op, l_val, r_val);
-                add_inst!(ctx.func_data_mut(), entry_bb, add_inst);
-
-                Ok(add_inst)
+                Ok(ctx.emit_binary((*add_op).into(), l_val, r_val))
             }
         }
     }
@@ -346,18 +282,7 @@ impl IRGen for MulExp {
             MulExp::MulUnary(l, mul_op, r) => {
                 let l_val = l.generate(ctx)?;
                 let r_val = r.generate(ctx)?;
-
-                let op = match mul_op {
-                    MulOp::Mul => BinaryOp::Mul,
-                    MulOp::Div => BinaryOp::Div,
-                    MulOp::Mod => BinaryOp::Mod,
-                };
-
-                let entry_bb = entry_bb!(ctx);
-                let mul_inst = new_value!(ctx.func_data_mut()).binary(op, l_val, r_val);
-                add_inst!(ctx.func_data_mut(), entry_bb, mul_inst);
-
-                Ok(mul_inst)
+                Ok(ctx.emit_binary((*mul_op).into(), l_val, r_val))
             }
         }
     }
@@ -371,24 +296,12 @@ impl IRGen for UnaryExp {
             UnaryExp::PrimaryExp(primary_exp) => primary_exp.generate(ctx),
             UnaryExp::Unary(op, exp) => {
                 let exp_val = exp.generate(ctx)?;
-
-                let entry_bb = entry_bb!(ctx);
-                let zero = new_value!(ctx.func_data_mut()).integer(0);
+                let zero = ctx.emit_integer(0);
 
                 let result = match op {
                     UnaryOp::Plus => exp_val,
-                    UnaryOp::Minus => {
-                        let sub_inst =
-                            new_value!(ctx.func_data_mut()).binary(BinaryOp::Sub, zero, exp_val);
-                        add_inst!(ctx.func_data_mut(), entry_bb, sub_inst);
-                        sub_inst
-                    }
-                    UnaryOp::Not => {
-                        let eq_inst =
-                            new_value!(ctx.func_data_mut()).binary(BinaryOp::Eq, exp_val, zero);
-                        add_inst!(ctx.func_data_mut(), entry_bb, eq_inst);
-                        eq_inst
-                    }
+                    UnaryOp::Minus => ctx.emit_binary(BinaryOp::Sub, zero, exp_val),
+                    UnaryOp::Not => ctx.emit_binary(BinaryOp::Eq, exp_val, zero),
                 };
 
                 Ok(result)
@@ -402,7 +315,7 @@ impl IRGen for PrimaryExp {
 
     fn generate(&self, ctx: &mut Ctx) -> IRResult<Self::Output> {
         match self {
-            PrimaryExp::Number(num) => Ok(new_value!(ctx.func_data_mut()).integer(*num)),
+            PrimaryExp::Number(num) => Ok(ctx.emit_integer(*num)),
             PrimaryExp::Paren(exp) => exp.generate(ctx),
             PrimaryExp::LVal(lval) => {
                 let LVal::Ident(ident) = lval;
@@ -412,13 +325,8 @@ impl IRGen for PrimaryExp {
                     .ok_or(Error::SymbolNotFound)?;
 
                 match sym {
-                    Symbol::Const(c) => Ok(new_value!(ctx.func_data_mut()).integer(c)),
-                    Symbol::Var(var) => {
-                        let entry_bb = entry_bb!(ctx);
-                        let load_inst = new_value!(ctx.func_data_mut()).load(var);
-                        add_inst!(ctx.func_data_mut(), entry_bb, load_inst);
-                        Ok(load_inst)
-                    }
+                    Symbol::Const(c) => Ok(ctx.emit_integer(c)),
+                    Symbol::Var(var) => Ok(ctx.emit_load(var)),
                 }
             }
         }
