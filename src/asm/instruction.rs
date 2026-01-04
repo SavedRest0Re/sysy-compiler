@@ -1,8 +1,21 @@
+use std::fs::File;
+use std::io::{Result, Write};
+
 pub enum RVInst {
     Raw(String),
     Li {
         rd: &'static str,
         imm12: i32,
+    },
+    Lw {
+        rd: &'static str,
+        rs1: &'static str,
+        offset: i32,
+    },
+    Sw {
+        rs2: &'static str,
+        rs1: &'static str,
+        offset: i32,
     },
     Xor {
         rd: &'static str,
@@ -79,6 +92,8 @@ impl RVInst {
         match self {
             RVInst::Raw(s) => s.clone(),
             RVInst::Li { rd, imm12 } => format!("li {}, {}", rd, imm12),
+            RVInst::Lw { rd, rs1, offset } => format!("lw {}, {}({})", rd, offset, rs1),
+            RVInst::Sw { rs2, rs1, offset } => format!("sw {}, {}({})", rs2, offset, rs1),
             RVInst::Xor { rd, rs1, rs2 } => format!("xor {}, {}, {}", rd, rs1, rs2),
             RVInst::Seqz { rd, rs } => format!("seqz {}, {}", rd, rs),
             RVInst::Snez { rd, rs } => format!("snez {}, {}", rd, rs),
@@ -98,7 +113,10 @@ impl RVInst {
     }
 
     pub fn to_asm_indent2(&self) -> String {
-        let asm = self.to_asm();
-        format!("  {}", asm)
+        format!("  {}", self.to_asm())
+    }
+
+    pub fn emit_ident2(&self, buf: &mut File) -> Result<()> {
+        writeln!(buf, "  {}", self.to_asm())
     }
 }

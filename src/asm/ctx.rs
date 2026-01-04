@@ -24,15 +24,19 @@ impl RegAlloc {
         RegAlloc::REGS[id]
     }
 
-    pub fn alloc_reg(&mut self, value: Value) -> Option<usize> {
+    pub fn alloc_reg(&mut self, value: Option<Value>) -> Option<usize> {
         // check if already allocated
-        if let Some(&r) = self.used_by_value.get(&value) {
-            return Some(r);
+        if let Some(v) = value {
+            if let Some(&r) = self.used_by_value.get(&v) {
+                return Some(r);
+            }
         }
 
         for r in 0..self.regs.len() {
             if self.regs[r] == false {
-                self.used_by_value.insert(value, r);
+                if let Some(v) = value {
+                    self.used_by_value.insert(v, r);
+                }
                 self.regs[r] = true;
 
                 return Some(r);
@@ -64,9 +68,15 @@ impl RegAlloc {
 pub struct Ctx<'a> {
     program: &'a Program,
     cur_func: Option<Function>,
-    pub reg_allocator: Option<RegAlloc>,
     cur_bb: Option<BasicBlock>,
     cur_value: Option<Value>,
+
+    pub reg_allocator: Option<RegAlloc>,
+
+    // Function stack frame size
+    pub stack_size: usize,
+    // virtual register -> offset relative to sp
+    pub stack_alloc: HashMap<Value, usize>,
 }
 
 impl<'a> Ctx<'a> {
@@ -77,6 +87,9 @@ impl<'a> Ctx<'a> {
             reg_allocator: None,
             cur_bb: None,
             cur_value: None,
+
+            stack_size: 0,
+            stack_alloc: HashMap::new(),
         }
     }
 
@@ -100,7 +113,7 @@ impl<'a> Ctx<'a> {
         self.cur_func
     }
 
-    pub fn func_data(&self) -> &FunctionData {
+    pub fn func_data(&self) -> &'a FunctionData {
         self.program.func(self.cur_func.unwrap())
     }
 
