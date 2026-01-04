@@ -84,9 +84,11 @@ BlockItem: BlockItem = {
   <stmt: Stmt> => BlockItem::Stmt(stmt),
 };
 
-// Stmt ::= LVal "=" Exp ";" | "return" Exp ";";
+// Stmt ::= LVal "=" Exp ";" | [Exp] ";" | Block | "return" Exp ";";
 Stmt: Stmt = {
   <lval: LVal> "=" <exp: Exp> ";" => Stmt::Assign(lval, exp),
+  <exp: Exp?> ";" => Stmt::Exp(exp),
+  <block: Block> => Stmt::Block(block),
   "return" <exp: Exp> ";" => Stmt::Return(exp),
 };
 

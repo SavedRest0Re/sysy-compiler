@@ -19,9 +19,6 @@ use crate::{
     new_bb, new_value,
 };
 
-// Exp 里, 所有出现 LVal 的地方均可直接替换为整数常量
-// TODO: 常量声明本身不需要生成任何 IR
-
 pub trait IRGen {
     type Output;
 
@@ -73,13 +70,14 @@ impl IRGen for Block {
     type Output = ();
 
     fn generate(&self, ctx: &mut Ctx) -> IRResult<Self::Output> {
+        ctx.symbol_table.enter_scope();
         for item in self.items.iter() {
             match item {
                 BlockItem::Decl(decl) => decl.generate(ctx)?,
                 BlockItem::Stmt(stmt) => stmt.generate(ctx)?,
             };
         }
-
+        ctx.symbol_table.exit_scope();
         Ok(())
     }
 }
@@ -114,6 +112,12 @@ impl IRGen for Stmt {
                 let ret_inst = new_value!(ctx.func_data_mut()).ret(Some(result));
                 add_inst!(ctx.func_data_mut(), entry_bb, ret_inst);
             }
+            Stmt::Exp(exp) => {
+                if let Some(exp) = exp {
+                    exp.generate(ctx)?;
+                }
+            }
+            Stmt::Block(block) => block.generate(ctx)?,
         }
         Ok(())
     }
@@ -167,6 +171,10 @@ impl IRGen for VarDef {
         let entry_bb = entry_bb!(ctx);
 
         let var_alloc_inst = new_value!(ctx.func_data_mut()).alloc(Type::get_i32()); // BType must be i32
+        let unique_name = ctx.unique_name(&self.ident);
+        ctx.func_data_mut()
+            .dfg_mut()
+            .set_value_name(var_alloc_inst, Some(unique_name));
         add_inst!(ctx.func_data_mut(), entry_bb, var_alloc_inst);
 
         if let Some(ref init_val) = self.init_val {
