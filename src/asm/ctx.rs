@@ -147,4 +147,47 @@ impl<'a> Ctx<'a> {
         self.cur_value = saved;
         result
     }
+
+    pub fn alloc_reg(&mut self, value: Option<Value>) -> usize {
+        self.reg_allocator
+            .as_mut()
+            .expect("RegAlloc not initialized")
+            .alloc_reg(value)
+            .expect("No available registers")
+    }
+
+    pub fn free_reg(&mut self, reg: usize) {
+        self.reg_allocator
+            .as_mut()
+            .expect("RegAlloc not initialized")
+            .free_reg(reg);
+    }
+
+    pub fn free_reg_lit(&mut self, reg: &str) {
+        self.reg_allocator
+            .as_mut()
+            .expect("RegAlloc not initialized")
+            .free_reg_lit(reg);
+    }
+
+    /// Query register by Value, handles x0 special case for integer 0
+    pub fn query_reg(&self, value: Value) -> &'static str {
+        use koopa::ir::ValueKind;
+        if let ValueKind::Integer(i) = self.func_data().dfg().value(value).kind() {
+            if i.value() == 0 {
+                return "x0";
+            }
+        }
+        let reg = self
+            .reg_allocator
+            .as_ref()
+            .expect("RegAlloc not initialized")
+            .query_reg_by_value(value)
+            .expect("Value not in register");
+        RegAlloc::literal(reg)
+    }
+
+    pub fn stack_offset(&self, value: &Value) -> Option<i32> {
+        self.stack_alloc.get(value).map(|&v| v as i32)
+    }
 }

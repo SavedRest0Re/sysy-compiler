@@ -11,21 +11,90 @@ use crate::asm::{
     instruction::RVInst,
 };
 
-macro_rules! query_reg_by_value {
-    ($ctx:expr, $value:expr) => {
-        match $ctx.func_data().dfg().value($value).kind() {
-            ValueKind::Integer(i) if i.value() == 0 => "x0",
-            _ => {
-                let reg = $ctx
-                    .reg_allocator
-                    .as_ref()
-                    .unwrap()
-                    .query_reg_by_value($value)
-                    .unwrap();
-                RegAlloc::literal(reg)
-            }
+fn emit_binary_inst(
+    op: BinaryOp,
+    rd: &'static str,
+    rs1: &'static str,
+    rs2: &'static str,
+    buf: &mut File,
+) -> Result<()> {
+    use BinaryOp::*;
+    match op {
+        // Simple R-type instructions
+        Add => RVInst::Add { rd, rs1, rs2 }.emit_indent2(buf),
+        Sub => RVInst::Sub { rd, rs1, rs2 }.emit_indent2(buf),
+        Mul => RVInst::Mul { rd, rs1, rs2 }.emit_indent2(buf),
+        Div => RVInst::Div { rd, rs1, rs2 }.emit_indent2(buf),
+        Mod => RVInst::Rem { rd, rs1, rs2 }.emit_indent2(buf),
+        And => RVInst::And { rd, rs1, rs2 }.emit_indent2(buf),
+        Or => RVInst::Or { rd, rs1, rs2 }.emit_indent2(buf),
+        Lt => RVInst::Slt { rd, rs1, rs2 }.emit_indent2(buf),
+        Gt => RVInst::Slt {
+            rd,
+            rs1: rs2,
+            rs2: rs1,
         }
-    };
+        .emit_indent2(buf),
+
+        // Comparison operations that need two instructions
+        Eq => {
+            RVInst::Xor { rd, rs1, rs2 }.emit_indent2(buf)?;
+            RVInst::Seqz { rd, rs: rd }.emit_indent2(buf)
+        }
+        NotEq => {
+            RVInst::Xor { rd, rs1, rs2 }.emit_indent2(buf)?;
+            RVInst::Snez { rd, rs: rd }.emit_indent2(buf)
+        }
+        Le => {
+            // a <= b  <==>  !(a > b)  <==>  !(b < a) == 0
+            RVInst::Slt {
+                rd,
+                rs1: rs2,
+                rs2: rs1,
+            }
+            .emit_indent2(buf)?;
+            RVInst::Seqz { rd, rs: rd }.emit_indent2(buf)
+        }
+        Ge => {
+            // a >= b  <==>  !(a < b)
+            RVInst::Slt { rd, rs1, rs2 }.emit_indent2(buf)?;
+            RVInst::Seqz { rd, rs: rd }.emit_indent2(buf)
+        }
+
+        _ => unimplemented!("Unsupported binary op: {:?}", op),
+    }
+}
+
+/// Load a Value operand into a register, returns the register literal
+/// - Integer 0 -> returns "x0"
+/// - Value on stack -> generates lw and returns allocated register
+/// - Otherwise -> recursively generates value and returns its register
+fn load_operand_to_reg(ctx: &mut Ctx, buf: &mut File, v: Value) -> Result<&'static str> {
+    // Check if value is integer 0 -> use x0
+    let v_data = ctx.func_data().dfg().value(v);
+    if let ValueKind::Integer(i) = v_data.kind() {
+        if i.value() == 0 {
+            return Ok("x0");
+        }
+    }
+
+    // Check if value is on stack (virtual register)
+    if let Some(offset) = ctx.stack_offset(&v) {
+        let reg = ctx.alloc_reg(Some(v));
+        RVInst::Lw {
+            rd: RegAlloc::literal(reg),
+            rs1: "sp",
+            offset,
+        }
+        .emit_indent2(buf)?;
+        Ok(RegAlloc::literal(reg))
+    } else {
+        // Recursively generate the value (e.g., immediate)
+        let saved_value = ctx.cur_value().unwrap();
+        v.generate(ctx, buf)?;
+        ctx.set_cur_value(saved_value);
+        Ok(ctx.query_reg(v))
+    }
 }
 
 pub trait AsmGen {
@@ -69,14 +138,12 @@ impl AsmGen for Function {
                 // stack allocation for ALL virtual registers
                 // `Alloc` do not generate any asm, so we don't need to allocate stack space for it
                 if let ValueKind::Alloc(_) = inst_data.kind() {
-                    // dbg!(inst_data.kind());
                     ctx.stack_alloc.insert(inst, ctx.stack_size);
                     // ctx.stack_size += inst_data.ty().size(); // error
                     ctx.stack_size += 4;
                 } else {
                     // If the inst has return value, we need to allocate stack space for it
                     if !inst_data.ty().is_unit() {
-                        // dbg!(inst_data.kind());
                         ctx.stack_alloc.insert(inst, ctx.stack_size);
                         ctx.stack_size += 4;
                     }
@@ -135,257 +202,59 @@ impl AsmGen for Value {
         let value_data = ctx.func_data().dfg().value(*self).clone();
         match value_data.kind() {
             ValueKind::Integer(i) => {
-                // use x0 for constant 0, so we don't need to allocate a register
                 if i.value() != 0 {
-                    let reg = ctx
-                        .reg_allocator
-                        .as_mut()
-                        .unwrap()
-                        .alloc_reg(Some(*self))
-                        .unwrap();
+                    let reg = ctx.alloc_reg(Some(*self));
                     RVInst::Li {
                         rd: RegAlloc::literal(reg),
                         imm12: i.value(),
                     }
-                    .emit_ident2(buf)?;
+                    .emit_indent2(buf)?;
                 }
-
                 // NOTE: Do not free allocated register here
             }
             ValueKind::Binary(binary) => {
                 let lhs_v = binary.lhs();
                 let rhs_v = binary.rhs();
 
-                // Helper closure to load a value into a register
-                // Returns the register literal string
-                let load_operand =
-                    |ctx: &mut Ctx, buf: &mut File, v: Value| -> Result<&'static str> {
-                        // Check if value is integer 0 -> use x0
-                        let v_data = ctx.func_data().dfg().value(v);
-                        if let ValueKind::Integer(i) = v_data.kind() {
-                            if i.value() == 0 {
-                                return Ok("x0");
-                            }
-                        }
+                let lhs_reg = load_operand_to_reg(ctx, buf, lhs_v)?;
+                let rhs_reg = load_operand_to_reg(ctx, buf, rhs_v)?;
 
-                        // Check if value is in stack_alloc (virtual register)
-                        if let Some(&offset) = ctx.stack_alloc.get(&v) {
-                            let reg = ctx
-                                .reg_allocator
-                                .as_mut()
-                                .unwrap()
-                                .alloc_reg(Some(v))
-                                .unwrap();
-                            RVInst::Lw {
-                                rd: RegAlloc::literal(reg),
-                                rs1: "sp",
-                                offset: offset as i32,
-                            }
-                            .emit_ident2(buf)?;
-                            Ok(RegAlloc::literal(reg))
-                        } else {
-                            // Generate the value (e.g., immediate)
-                            v.generate(ctx, buf)?;
-                            // Query the register
-                            let reg = ctx
-                                .reg_allocator
-                                .as_ref()
-                                .unwrap()
-                                .query_reg_by_value(v)
-                                .unwrap();
-                            Ok(RegAlloc::literal(reg))
-                        }
-                    };
+                let result_reg = ctx.alloc_reg(Some(*self));
 
-                let lhs_reg = load_operand(ctx, buf, lhs_v)?;
-                let rhs_reg = load_operand(ctx, buf, rhs_v)?;
-
-                // FIXME: Restore cur_value since recursive calls changed it
-                ctx.set_cur_value(*self);
-
-                let result_reg = ctx
-                    .reg_allocator
-                    .as_mut()
-                    .unwrap()
-                    .alloc_reg(Some(*self))
-                    .unwrap();
-
-                match binary.op() {
-                    // FIXME: `add lhs_reg lhs_reg rhs_reg` 节省寄存器
-                    BinaryOp::Add => {
-                        RVInst::Add {
-                            rd: RegAlloc::literal(result_reg),
-                            rs1: lhs_reg,
-                            rs2: rhs_reg,
-                        }
-                        .emit_ident2(buf)?;
-                    }
-                    BinaryOp::Sub => {
-                        RVInst::Sub {
-                            rd: RegAlloc::literal(result_reg),
-                            rs1: lhs_reg,
-                            rs2: rhs_reg,
-                        }
-                        .emit_ident2(buf)?;
-                    }
-                    BinaryOp::Mul => {
-                        RVInst::Mul {
-                            rd: RegAlloc::literal(result_reg),
-                            rs1: lhs_reg,
-                            rs2: rhs_reg,
-                        }
-                        .emit_ident2(buf)?;
-                    }
-                    BinaryOp::Div => {
-                        RVInst::Div {
-                            rd: RegAlloc::literal(result_reg),
-                            rs1: lhs_reg,
-                            rs2: rhs_reg,
-                        }
-                        .emit_ident2(buf)?;
-                    }
-
-                    BinaryOp::Mod => {
-                        RVInst::Rem {
-                            rd: RegAlloc::literal(result_reg),
-                            rs1: lhs_reg,
-                            rs2: rhs_reg,
-                        }
-                        .emit_ident2(buf)?;
-                    }
-
-                    BinaryOp::Eq => {
-                        RVInst::Xor {
-                            rd: RegAlloc::literal(result_reg),
-                            rs1: lhs_reg,
-                            rs2: rhs_reg,
-                        }
-                        .emit_ident2(buf)?;
-                        RVInst::Seqz {
-                            rd: RegAlloc::literal(result_reg),
-                            rs: RegAlloc::literal(result_reg),
-                        }
-                        .emit_ident2(buf)?;
-                    }
-                    BinaryOp::NotEq => {
-                        RVInst::Xor {
-                            rd: RegAlloc::literal(result_reg),
-                            rs1: lhs_reg,
-                            rs2: rhs_reg,
-                        }
-                        .emit_ident2(buf)?;
-                        RVInst::Snez {
-                            rd: RegAlloc::literal(result_reg),
-                            rs: RegAlloc::literal(result_reg),
-                        }
-                        .emit_ident2(buf)?;
-                    }
-
-                    BinaryOp::Lt => {
-                        RVInst::Slt {
-                            rd: RegAlloc::literal(result_reg),
-                            rs1: lhs_reg,
-                            rs2: rhs_reg,
-                        }
-                        .emit_ident2(buf)?;
-                    }
-
-                    BinaryOp::Le => {
-                        RVInst::Slt {
-                            rd: RegAlloc::literal(result_reg),
-                            rs1: rhs_reg,
-                            rs2: lhs_reg,
-                        }
-                        .emit_ident2(buf)?;
-                        RVInst::Seqz {
-                            rd: RegAlloc::literal(result_reg),
-                            rs: RegAlloc::literal(result_reg),
-                        }
-                        .emit_ident2(buf)?;
-                    }
-
-                    BinaryOp::Gt => {
-                        RVInst::Slt {
-                            rd: RegAlloc::literal(result_reg),
-                            rs1: rhs_reg,
-                            rs2: lhs_reg,
-                        }
-                        .emit_ident2(buf)?;
-                    }
-
-                    BinaryOp::Ge => {
-                        RVInst::Slt {
-                            rd: RegAlloc::literal(result_reg),
-                            rs1: lhs_reg,
-                            rs2: rhs_reg,
-                        }
-                        .emit_ident2(buf)?;
-                        RVInst::Seqz {
-                            rd: RegAlloc::literal(result_reg),
-                            rs: RegAlloc::literal(result_reg),
-                        }
-                        .emit_ident2(buf)?;
-                    }
-
-                    BinaryOp::And => {
-                        RVInst::And {
-                            rd: RegAlloc::literal(result_reg),
-                            rs1: lhs_reg,
-                            rs2: rhs_reg,
-                        }
-                        .emit_ident2(buf)?;
-                    }
-
-                    BinaryOp::Or => {
-                        RVInst::Or {
-                            rd: RegAlloc::literal(result_reg),
-                            rs1: lhs_reg,
-                            rs2: rhs_reg,
-                        }
-                        .emit_ident2(buf)?;
-                    }
-
-                    _ => unimplemented!(),
-                };
+                emit_binary_inst(
+                    binary.op(),
+                    RegAlloc::literal(result_reg),
+                    lhs_reg,
+                    rhs_reg,
+                    buf,
+                )?;
 
                 // Store result to stack if this value has stack allocation
-                if let Some(&offset) = ctx.stack_alloc.get(self) {
+                if let Some(offset) = ctx.stack_offset(self) {
                     RVInst::Sw {
                         rs2: RegAlloc::literal(result_reg),
                         rs1: "sp",
-                        offset: offset as i32,
+                        offset,
                     }
-                    .emit_ident2(buf)?;
+                    .emit_indent2(buf)?;
                 }
 
                 // 释放 lhs, rhs 和 result 寄存器
-                ctx.reg_allocator.as_mut().unwrap().free_reg_lit(lhs_reg);
-                ctx.reg_allocator.as_mut().unwrap().free_reg_lit(rhs_reg);
-                ctx.reg_allocator.as_mut().unwrap().free_reg(result_reg);
+                ctx.free_reg_lit(lhs_reg);
+                ctx.free_reg_lit(rhs_reg);
+                ctx.free_reg(result_reg);
             }
             ValueKind::Return(ret) => {
                 if let Some(retval) = ret.value() {
-                    // ret `virtual reg`
-                    if let Some(&retval_offset) = ctx.stack_alloc.get(&retval) {
-                        RVInst::Lw {
-                            rd: "a0",
-                            rs1: "sp",
-                            offset: retval_offset as i32,
-                        }
-                        .emit_ident2(buf)?;
-                    } else {
-                        retval.generate(ctx, buf)?;
-                        let ret_reg = query_reg_by_value!(ctx, retval);
-
+                    let ret_reg = load_operand_to_reg(ctx, buf, retval)?;
+                    if ret_reg != "a0" {
                         RVInst::Mv {
                             rd: "a0",
                             rs: ret_reg,
                         }
-                        .emit_ident2(buf)?;
-
-                        // 释放 ret_reg 临时寄存器
-                        ctx.reg_allocator.as_mut().unwrap().free_reg_lit(ret_reg);
-                    };
+                        .emit_indent2(buf)?;
+                    }
+                    ctx.free_reg_lit(ret_reg);
                 }
 
                 // FIXME: if stack size is not in range [-2048, 2047], we need to use a different way to allocate stack space
@@ -395,8 +264,8 @@ impl AsmGen for Value {
                     rs1: "sp",
                     imm12: ctx.stack_size as i32,
                 }
-                .emit_ident2(buf)?;
-                RVInst::Ret.emit_ident2(buf)?;
+                .emit_indent2(buf)?;
+                RVInst::Ret.emit_indent2(buf)?;
             }
             ValueKind::Alloc(_) => {
                 // Do not generate asm for Alloc IR
@@ -406,85 +275,35 @@ impl AsmGen for Value {
                 // 1. load src(virtual reg) to temporary register
                 // 2. store temporary register to dest (stack address)
                 let src = load.src();
-                let Some(&src_offset) = ctx.stack_alloc.get(&src) else {
-                    panic!("Unknown variable {:?}", src);
-                };
-                // let src_reg = query_reg_by_value!(ctx, src);
-                let src_reg = ctx
-                    .reg_allocator
-                    .as_mut()
-                    .unwrap()
-                    .alloc_reg(Some(src))
-                    .unwrap();
-                RVInst::Lw {
-                    rd: RegAlloc::literal(src_reg),
-                    rs1: "sp",
-                    offset: src_offset as i32,
-                }
-                .emit_ident2(buf)?;
+                let src_reg = load_operand_to_reg(ctx, buf, src)?;
 
-                let dest_offset = ctx.stack_alloc.get(self).unwrap();
-                RVInst::Sw {
-                    rs2: RegAlloc::literal(src_reg),
-                    rs1: "sp",
-                    offset: *dest_offset as i32,
-                }
-                .emit_ident2(buf)?;
-
-                // free the temporary register
-                ctx.reg_allocator.as_mut().unwrap().free_reg(src_reg);
-            }
-            ValueKind::Store(store) => {
-                // `Store` IR have not return value.
-                // 1. load src(virtual reg/immediate) to temporary register
-                // 2. store temporary register to dest (stack address)
-                let src = store.value();
-                let dest = store.dest();
-
-                let src_reg;
-
-                match ctx.stack_alloc.get(&src) {
-                    // 如果 src 在栈上, 生成 lw
-                    // virtual reg `src` Do not recursively dive into
-                    Some(&src_offset) => {
-                        src_reg = RegAlloc::literal(
-                            ctx.reg_allocator
-                                .as_mut()
-                                .unwrap()
-                                .alloc_reg(Some(*self))
-                                .unwrap(),
-                        );
-                        RVInst::Lw {
-                            rd: src_reg,
-                            rs1: "sp",
-                            offset: src_offset as i32,
-                        }
-                        .emit_ident2(buf)?;
-                    }
-                    None => {
-                        // Recursive here.
-                        let src_data = ctx.func_data().dfg().value(src);
-                        let ValueKind::Integer(_) = src_data.kind() else {
-                            panic!("Expect integer, got {:?}", src_data.kind())
-                        };
-                        src.generate(ctx, buf)?;
-
-                        src_reg = query_reg_by_value!(ctx, src);
-                    }
-                }
-
-                let Some(&dest_offset) = ctx.stack_alloc.get(&dest) else {
-                    panic!("Unknown variable {:?}", dest);
-                };
+                let dest_offset = ctx.stack_offset(self).expect("Load dest not on stack");
                 RVInst::Sw {
                     rs2: src_reg,
                     rs1: "sp",
-                    offset: dest_offset as i32,
+                    offset: dest_offset,
                 }
-                .emit_ident2(buf)?;
+                .emit_indent2(buf)?;
 
-                // free the temporary register
-                ctx.reg_allocator.as_mut().unwrap().free_reg_lit(src_reg);
+                ctx.free_reg_lit(src_reg);
+            }
+            ValueKind::Store(store) => {
+                // 1. load src(virtual reg/immediate) to register
+                // 2. store register to dest (stack address)
+                let src = store.value();
+                let dest = store.dest();
+
+                let src_reg = load_operand_to_reg(ctx, buf, src)?;
+
+                let dest_offset = ctx.stack_offset(&dest).expect("Store dest not on stack");
+                RVInst::Sw {
+                    rs2: src_reg,
+                    rs1: "sp",
+                    offset: dest_offset,
+                }
+                .emit_indent2(buf)?;
+
+                ctx.free_reg_lit(src_reg);
             }
             _ => unimplemented!(),
         }

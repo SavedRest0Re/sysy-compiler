@@ -88,7 +88,7 @@ pub enum RVInst {
 }
 
 impl RVInst {
-    pub fn to_asm(&self) -> String {
+    pub fn to_string(&self) -> String {
         match self {
             RVInst::Raw(s) => s.clone(),
             RVInst::Li { rd, imm12 } => format!("li {}, {}", rd, imm12),
@@ -112,11 +112,11 @@ impl RVInst {
         }
     }
 
-    pub fn to_asm_indent2(&self) -> String {
-        format!("  {}", self.to_asm())
+    pub fn to_string_indent2(&self) -> String {
+        format!("  {}", self.to_string())
     }
 
-    pub fn emit_ident2(&self, buf: &mut File) -> Result<()> {
-        writeln!(buf, "  {}", self.to_asm())
+    pub fn emit_indent2(&self, buf: &mut File) -> Result<()> {
+        writeln!(buf, "  {}", self.to_string())
     }
 }
