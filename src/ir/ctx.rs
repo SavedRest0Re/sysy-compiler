@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 
 use koopa::ir::{
-    BasicBlock, BinaryOp, Function, FunctionData, Program, Type, Value,
+    BasicBlock, BinaryOp, Function, FunctionData, Program, Type, Value, ValueKind,
     builder::{BasicBlockBuilder, LocalInstBuilder, ValueBuilder},
 };
 
@@ -48,7 +48,8 @@ impl SymbolTable {
 pub struct Ctx {
     pub program: Program,
     pub cur_func: Option<Function>,
-    cur_bb: Option<BasicBlock>,
+    pub cur_bb: Option<BasicBlock>,
+    pub bb_stack: Vec<BasicBlock>,
 
     pub symbol_table: SymbolTable,
     counter: u32,
@@ -60,6 +61,8 @@ impl Ctx {
             program: Program::new(),
             cur_func: None,
             cur_bb: None,
+            bb_stack: Vec::new(),
+
             symbol_table: SymbolTable::new(),
             counter: 0,
         }
@@ -83,8 +86,14 @@ impl Ctx {
         self.program.func_mut(self.cur_func.unwrap())
     }
 
-    pub fn unique_name(&mut self, ident: &str) -> String {
-        let name = format!("@{}_{}", ident, self.counter);
+    pub fn fetch_counter(&mut self) -> u32 {
+        let counter = self.counter;
+        self.counter += 1;
+        counter
+    }
+
+    pub fn unique_name(&mut self, ident: String) -> String {
+        let name = format!("{}_{}", ident, self.counter);
         self.counter += 1;
         name
     }
@@ -95,6 +104,10 @@ impl Ctx {
 
     pub fn set_cur_bb(&mut self, bb: BasicBlock) {
         self.cur_bb = Some(bb);
+    }
+
+    pub fn unset_cur_bb(&mut self) {
+        self.cur_bb = None;
     }
 
     pub fn create_bb(&mut self, name: Option<&str>) -> BasicBlock {
@@ -142,6 +155,26 @@ impl Ctx {
         self.add_inst(inst);
     }
 
+    pub fn emit_jump(&mut self, target: BasicBlock) {
+        let inst = self.func_data_mut().dfg_mut().new_value().jump(target);
+        self.add_inst(inst);
+    }
+
+    pub fn emit_br_if_needed(&mut self, target: BasicBlock) {
+        if !self.is_cur_bb_terminated() {
+            self.emit_jump(target);
+        }
+    }
+
+    pub fn emit_cond_br(&mut self, cond: Value, then_bb: BasicBlock, else_bb: BasicBlock) {
+        let inst = self
+            .func_data_mut()
+            .dfg_mut()
+            .new_value()
+            .branch(cond, then_bb, else_bb);
+        self.add_inst(inst);
+    }
+
     pub fn emit_alloc(&mut self, ty: Type) -> Value {
         let inst = self.func_data_mut().dfg_mut().new_value().alloc(ty);
         self.add_inst(inst);
@@ -162,5 +195,24 @@ impl Ctx {
             .insts_mut()
             .push_key_back(inst)
             .unwrap();
+    }
+
+    pub fn is_cur_bb_terminated(&self) -> bool {
+        let bb = self.cur_bb();
+        let bb_node = self
+            .func_data()
+            .layout()
+            .bbs()
+            .node(&bb)
+            .expect("current basic block not in layout");
+
+        let Some(&last_inst) = bb_node.insts().keys().last() else {
+            return false;
+        };
+
+        match self.func_data().dfg().value(last_inst).kind() {
+            ValueKind::Jump(_) | ValueKind::Branch(_) | ValueKind::Return(_) => true,
+            _ => false,
+        }
     }
 }

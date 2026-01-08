@@ -2,7 +2,6 @@ use std::fs::File;
 use std::io::{Result, Write};
 
 pub enum RVInst {
-    Raw(String),
     Li {
         rd: &'static str,
         imm12: i32,
@@ -85,12 +84,18 @@ pub enum RVInst {
         rs1: &'static str,
         rs2: &'static str,
     },
+    Bnez {
+        rs: &'static str,
+        label: String,
+    },
+    J {
+        label: String,
+    },
 }
 
 impl RVInst {
     pub fn to_string(&self) -> String {
         match self {
-            RVInst::Raw(s) => s.clone(),
             RVInst::Li { rd, imm12 } => format!("li {}, {}", rd, imm12),
             RVInst::Lw { rd, rs1, offset } => format!("lw {}, {}({})", rd, offset, rs1),
             RVInst::Sw { rs2, rs1, offset } => format!("sw {}, {}({})", rs2, offset, rs1),
@@ -109,6 +114,8 @@ impl RVInst {
             RVInst::Slt { rd, rs1, rs2 } => format!("slt {}, {}, {}", rd, rs1, rs2),
             RVInst::And { rd, rs1, rs2 } => format!("and {}, {}, {}", rd, rs1, rs2),
             RVInst::Or { rd, rs1, rs2 } => format!("or {}, {}, {}", rd, rs1, rs2),
+            RVInst::Bnez { rs, label } => format!("bnez {}, {}", rs, label),
+            RVInst::J { label } => format!("j {}", label),
         }
     }
 

@@ -121,7 +121,7 @@ impl AsmGen for Function {
 
     fn generate(&self, ctx: &mut Ctx, buf: &mut File) -> Result<Self::Output> {
         ctx.set_cur_func(*self);
-        ctx.set_func_alloc(RegAlloc::new());
+        ctx.set_reg_alloc(RegAlloc::new());
         ctx.stack_size = 0;
         ctx.stack_alloc = HashMap::new();
 
@@ -160,7 +160,7 @@ impl AsmGen for Function {
 
         ctx.stack_alloc.clear();
         ctx.stack_size = 0;
-        ctx.unset_func_alloc();
+        ctx.unset_reg_alloc();
         ctx.unset_cur_func();
         Ok(())
     }
@@ -171,6 +171,13 @@ impl AsmGen for BasicBlock {
 
     fn generate(&self, ctx: &mut Ctx, buf: &mut File) -> Result<Self::Output> {
         ctx.set_cur_bb(*self);
+
+        if let Some(entry_bb) = ctx.func_data().layout().entry_bb() {
+            if entry_bb != *self {
+                let label = ctx.bb_label(*self);
+                writeln!(buf, "{}:", label)?;
+            }
+        }
 
         let insts: Vec<_> = ctx
             .func_data()
@@ -304,6 +311,28 @@ impl AsmGen for Value {
                 .emit_indent2(buf)?;
 
                 ctx.free_reg_lit(src_reg);
+            }
+            ValueKind::Branch(br) => {
+                let cond = br.cond();
+                let true_label = ctx.bb_label(br.true_bb());
+                let false_label = ctx.bb_label(br.false_bb());
+
+                let cond_reg = load_operand_to_reg(ctx, buf, cond)?;
+                RVInst::Bnez {
+                    rs: cond_reg,
+                    label: true_label,
+                }
+                .emit_indent2(buf)?;
+                RVInst::J { label: false_label }.emit_indent2(buf)?;
+
+                ctx.free_reg_lit(cond_reg);
+            }
+            ValueKind::Jump(jump) => {
+                let target_label = ctx.bb_label(jump.target());
+                RVInst::J {
+                    label: target_label,
+                }
+                .emit_indent2(buf)?;
             }
             _ => unimplemented!(),
         }

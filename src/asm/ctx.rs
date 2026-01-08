@@ -93,11 +93,11 @@ impl<'a> Ctx<'a> {
         }
     }
 
-    pub fn set_func_alloc(&mut self, func_alloc: RegAlloc) {
-        self.reg_allocator = Some(func_alloc);
+    pub fn set_reg_alloc(&mut self, reg_alloc: RegAlloc) {
+        self.reg_allocator = Some(reg_alloc);
     }
 
-    pub fn unset_func_alloc(&mut self) {
+    pub fn unset_reg_alloc(&mut self) {
         self.reg_allocator = None;
     }
 
@@ -189,5 +189,10 @@ impl<'a> Ctx<'a> {
 
     pub fn stack_offset(&self, value: &Value) -> Option<i32> {
         self.stack_alloc.get(value).map(|&v| v as i32)
+    }
+
+    pub fn bb_label(&self, bb: BasicBlock) -> String {
+        let label = self.func_data().dfg().bb(bb).name().clone().unwrap();
+        label.replace('%', "")
     }
 }

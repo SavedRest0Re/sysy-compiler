@@ -78,6 +78,7 @@ pub enum Stmt {
     Assign(LVal, Exp),
     Return(Exp),
     Exp(Option<Exp>),
+    If(Exp, Box<Stmt>, Option<Box<Stmt>>),
     Block(Block),
 }
 

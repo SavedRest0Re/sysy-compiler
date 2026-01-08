@@ -84,13 +84,32 @@ BlockItem: BlockItem = {
   <stmt: Stmt> => BlockItem::Stmt(stmt),
 };
 
-// Stmt ::= LVal "=" Exp ";" | [Exp] ";" | Block | "return" Exp ";";
+// Stmt ::= LVal "=" Exp ";" | [Exp] ";" | Block | "if" "(" Exp ")" Stmt ["else" Stmt] | "return" Exp ";";
+
 Stmt: Stmt = {
+  <matched: MatchedStmt> => matched,
+  <open: OpenStmt> => open,
+};
+
+MatchedStmt: Stmt = {
   <lval: LVal> "=" <exp: Exp> ";" => Stmt::Assign(lval, exp),
   <exp: Exp?> ";" => Stmt::Exp(exp),
   <block: Block> => Stmt::Block(block),
+
+  "if" "(" <exp: Exp> ")" <then: MatchedStmt> "else" <else_stmt: MatchedStmt> => Stmt::If(exp, Box::new(then), Some(Box::new(else_stmt))),
+
   "return" <exp: Exp> ";" => Stmt::Return(exp),
 };
+
+OpenStmt: Stmt = {
+  "if" "(" <cond: Exp> ")" <then: Stmt> => {
+    Stmt::If(cond, Box::new(then), None)
+  },
+
+  "if" "(" <cond: Exp> ")" <then: MatchedStmt> "else" <else_stmt: OpenStmt> => {
+    Stmt::If(cond, Box::new(then), Some(Box::new(else_stmt)))
+  },
+}
 
 // Exp ::= LOrExp;
 Exp: Exp = {

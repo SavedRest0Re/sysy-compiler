@@ -1,6 +1,6 @@
 /target
 
-examples/fixtures/*.koopa
-examples/fixtures/*.riscv
+examples/*.koopa
+examples/*.riscv
 
 *.log

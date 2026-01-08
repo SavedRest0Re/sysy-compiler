@@ -67,6 +67,9 @@ impl IRGen for Block {
     fn generate(&self, ctx: &mut Ctx) -> IRResult<Self::Output> {
         ctx.symbol_table.enter_scope();
         for item in self.items.iter() {
+            if ctx.is_cur_bb_terminated() {
+                break;
+            }
             match item {
                 BlockItem::Decl(decl) => decl.generate(ctx)?,
                 BlockItem::Stmt(stmt) => stmt.generate(ctx)?,
@@ -89,10 +92,10 @@ impl IRGen for Stmt {
 
                 let var = match ctx.symbol_table.resolve(ident) {
                     Some(sym) => match sym {
-                        Symbol::Const(_) => panic!("\"{}\" is a constant, not a variable", ident),
+                        Symbol::Const(_) => panic!("\"{ident}\" is a constant, not a variable"),
                         Symbol::Var(var) => *var,
                     },
-                    None => panic!("undefined: \"{}\"", ident),
+                    None => panic!("undefined: \"{ident}\""),
                 };
 
                 ctx.emit_store(rhs_value, var);
@@ -100,6 +103,8 @@ impl IRGen for Stmt {
             Stmt::Return(exp) => {
                 let result = exp.generate(ctx)?;
                 ctx.emit_ret(Some(result));
+                // return must terminate the basic block
+                // ctx.unset_cur_bb();
             }
             Stmt::Exp(exp) => {
                 if let Some(exp) = exp {
@@ -107,6 +112,34 @@ impl IRGen for Stmt {
                 }
             }
             Stmt::Block(block) => block.generate(ctx)?,
+            Stmt::If(cond, then_stmt, else_stmt) => {
+                let counter = ctx.fetch_counter();
+
+                let cond_val = cond.generate(ctx)?;
+                let then_bb = ctx.create_bb(Some(&format!("%then_{counter}")));
+                let end_bb = ctx.create_bb(Some(&format!("%endif_{counter}")));
+
+                if let Some(else_stmt) = else_stmt {
+                    let else_bb = ctx.create_bb(Some(&format!("%else_{counter}")));
+                    ctx.emit_cond_br(cond_val, then_bb, else_bb);
+
+                    ctx.set_cur_bb(then_bb);
+                    then_stmt.generate(ctx)?;
+                    ctx.emit_br_if_needed(end_bb); // maybe `ret`
+
+                    ctx.set_cur_bb(else_bb);
+                    else_stmt.generate(ctx)?;
+                    ctx.emit_br_if_needed(end_bb);
+                } else {
+                    ctx.emit_cond_br(cond_val, then_bb, end_bb);
+
+                    ctx.set_cur_bb(then_bb);
+                    then_stmt.generate(ctx)?;
+                    ctx.emit_br_if_needed(end_bb);
+                }
+
+                ctx.set_cur_bb(end_bb);
+            }
         }
         Ok(())
     }
@@ -158,8 +191,8 @@ impl IRGen for VarDef {
 
     fn generate(&self, ctx: &mut Ctx) -> IRResult<Self::Output> {
         let var_alloc = ctx.emit_alloc(Type::get_i32()); // BType must be i32
-        let unique_name = ctx.unique_name(&self.ident);
-        ctx.set_value_name(var_alloc, unique_name);
+        let vir_reg_name = ctx.unique_name(format!("@{}", self.ident));
+        ctx.set_value_name(var_alloc, vir_reg_name);
 
         if let Some(ref init_val) = self.init_val {
             let InitVal::Exp(exp) = init_val;
@@ -191,16 +224,34 @@ impl IRGen for LOrExp {
         match self {
             LOrExp::LAnd(l_and_exp) => l_and_exp.generate(ctx),
             LOrExp::LOrLAnd(l, r) => {
-                let lval = l.generate(ctx)?;
-                let rval = r.generate(ctx)?;
+                let counter = ctx.fetch_counter();
+
+                let lor_rhs = ctx.create_bb(Some(&format!("%lor_rhs_{}", counter)));
+                let lor_end = ctx.create_bb(Some(&format!("%lor_end_{}", counter)));
+
+                let result = ctx.emit_alloc(Type::get_i32());
+
+                let zero = ctx.emit_integer(0);
 
                 // l || r => (l != 0) | (r != 0)
-                let zero = ctx.emit_integer(0);
-                let lnez = ctx.emit_binary(BinaryOp::NotEq, lval, zero);
-                let rnez = ctx.emit_binary(BinaryOp::NotEq, rval, zero);
-                let or_inst = ctx.emit_binary(BinaryOp::Or, lnez, rnez);
+                // gen lhs
+                let lhs = l.generate(ctx)?;
+                let lnez = ctx.emit_binary(BinaryOp::NotEq, lhs, zero);
+                ctx.emit_store(lnez, result);
+                ctx.emit_cond_br(lnez, lor_end, lor_rhs);
 
-                Ok(or_inst)
+                // gen rhs
+                ctx.set_cur_bb(lor_rhs);
+                let rhs = r.generate(ctx)?;
+                let rnez = ctx.emit_binary(BinaryOp::NotEq, rhs, zero);
+                ctx.emit_store(rnez, result);
+                ctx.emit_jump(lor_end);
+
+                // gen end
+                ctx.set_cur_bb(lor_end);
+                let result = ctx.emit_load(result);
+
+                Ok(result)
             }
         }
     }
@@ -213,16 +264,34 @@ impl IRGen for LAndExp {
         match self {
             LAndExp::Eq(eq_exp) => eq_exp.generate(ctx),
             LAndExp::LAndEq(l, r) => {
-                let l_val = l.generate(ctx)?;
-                let r_val = r.generate(ctx)?;
+                let counter = ctx.fetch_counter();
+
+                let land_rhs = ctx.create_bb(Some(&format!("%land_rhs_{}", counter)));
+                let land_end = ctx.create_bb(Some(&format!("%land_end_{}", counter)));
+
+                let result = ctx.emit_alloc(Type::get_i32());
+
+                let zero = ctx.emit_integer(0);
 
                 // l && r => (l != 0) & (r != 0)
-                let zero = ctx.emit_integer(0);
-                let lnez = ctx.emit_binary(BinaryOp::NotEq, l_val, zero);
-                let rnez = ctx.emit_binary(BinaryOp::NotEq, r_val, zero);
-                let and_inst = ctx.emit_binary(BinaryOp::And, lnez, rnez);
+                // gen lhs
+                let lhs = l.generate(ctx)?;
+                let lnez = ctx.emit_binary(BinaryOp::NotEq, lhs, zero);
+                ctx.emit_store(lnez, result);
+                ctx.emit_cond_br(lnez, land_rhs, land_end);
 
-                Ok(and_inst)
+                // gen rhs
+                ctx.set_cur_bb(land_rhs);
+                let rhs = r.generate(ctx)?;
+                let rnez = ctx.emit_binary(BinaryOp::NotEq, rhs, zero);
+                ctx.emit_store(rnez, result);
+                ctx.emit_jump(land_end);
+
+                // gen end
+                ctx.set_cur_bb(land_end);
+                let result = ctx.emit_load(result);
+
+                Ok(result)
             }
         }
     }
