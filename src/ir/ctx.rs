@@ -49,7 +49,7 @@ pub struct Ctx {
     pub program: Program,
     pub cur_func: Option<Function>,
     pub cur_bb: Option<BasicBlock>,
-    pub bb_stack: Vec<BasicBlock>,
+    pub loop_stack: Vec<(BasicBlock, BasicBlock)>, // (cond_bb, end_bb)
 
     pub symbol_table: SymbolTable,
     counter: u32,
@@ -61,7 +61,7 @@ impl Ctx {
             program: Program::new(),
             cur_func: None,
             cur_bb: None,
-            bb_stack: Vec::new(),
+            loop_stack: Vec::new(),
 
             symbol_table: SymbolTable::new(),
             counter: 0,
@@ -197,14 +197,13 @@ impl Ctx {
             .unwrap();
     }
 
-    pub fn is_cur_bb_terminated(&self) -> bool {
-        let bb = self.cur_bb();
+    pub fn is_bb_terminated(&self, bb: BasicBlock) -> bool {
         let bb_node = self
             .func_data()
             .layout()
             .bbs()
             .node(&bb)
-            .expect("current basic block not in layout");
+            .expect("basic block not in layout");
 
         let Some(&last_inst) = bb_node.insts().keys().last() else {
             return false;
@@ -214,5 +213,12 @@ impl Ctx {
             ValueKind::Jump(_) | ValueKind::Branch(_) | ValueKind::Return(_) => true,
             _ => false,
         }
+    }
+
+    pub fn is_cur_bb_terminated(&self) -> bool {
+        let Some(bb) = self.cur_bb else {
+            return true;
+        };
+        self.is_bb_terminated(bb)
     }
 }

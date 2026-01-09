@@ -140,6 +140,41 @@ impl IRGen for Stmt {
 
                 ctx.set_cur_bb(end_bb);
             }
+            Stmt::While(cond, body) => {
+                let counter = ctx.fetch_counter();
+
+                let cond_bb = ctx.create_bb(Some(&format!("%cond_{counter}")));
+                let body_bb = ctx.create_bb(Some(&format!("%body_{counter}")));
+                let end_bb = ctx.create_bb(Some(&format!("%end_{counter}")));
+
+                ctx.loop_stack.push((cond_bb, end_bb));
+
+                // jump to cond_bb from cur_bb
+                ctx.emit_jump(cond_bb);
+
+                // gen cond_bb
+                ctx.set_cur_bb(cond_bb);
+                let cond_val = cond.generate(ctx)?;
+                ctx.emit_cond_br(cond_val, body_bb, end_bb);
+
+                // gen body_bb
+                ctx.set_cur_bb(body_bb);
+                body.generate(ctx)?;
+                ctx.emit_br_if_needed(cond_bb);
+
+                // set end_bb as cur_bb
+                ctx.set_cur_bb(end_bb);
+
+                ctx.loop_stack.pop();
+            }
+            Stmt::Break => {
+                let (_, end_bb) = ctx.loop_stack.last().unwrap();
+                ctx.emit_jump(*end_bb);
+            }
+            Stmt::Continue => {
+                let (cond_bb, _) = ctx.loop_stack.last().unwrap();
+                ctx.emit_jump(*cond_bb);
+            }
         }
         Ok(())
     }

@@ -17,18 +17,18 @@ build:
 	fi
 
 # Local testing with Docker
-testkoopa:
+testk:
 	docker run -it --rm -v $(shell pwd):/root/compiler maxxing/compiler-dev \
-		autotest -koopa -s lv6 /root/compiler
+		autotest -koopa -s lv7 /root/compiler
 
 testallk:
 	docker run -it --rm -v $(shell pwd):/root/compiler maxxing/compiler-dev \
-		bash -c 'for i in 1 2 3 4 5 6; do autotest -koopa -s lv$$i /root/compiler; done'
+		bash -c 'for i in 1 2 3 4 5 6 7; do autotest -koopa -s lv$$i /root/compiler; done'
 
-testriscv:
+testr:
 	docker run -it --rm -v $(shell pwd):/root/compiler maxxing/compiler-dev \
-		autotest -riscv -s lv6 /root/compiler
+		autotest -riscv -s lv7 /root/compiler
 
 testallr:
 	docker run -it --rm -v $(shell pwd):/root/compiler maxxing/compiler-dev \
-		bash -c 'for i in 1 2 3 4 5 6; do autotest -riscv -s lv$$i /root/compiler; done'
+		bash -c 'for i in 1 2 3 4 5 6 7; do autotest -riscv -s lv$$i /root/compiler; done'

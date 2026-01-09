@@ -84,7 +84,8 @@ BlockItem: BlockItem = {
   <stmt: Stmt> => BlockItem::Stmt(stmt),
 };
 
-// Stmt ::= LVal "=" Exp ";" | [Exp] ";" | Block | "if" "(" Exp ")" Stmt ["else" Stmt] | "return" Exp ";";
+// Stmt ::= LVal "=" Exp ";" | [Exp] ";" | Block | "if" "(" Exp ")" Stmt ["else" Stmt] | "return" Exp ";"
+//        | "while" "(" Exp ")" Stmt | "break" ";" | "continue" ";" ;
 
 Stmt: Stmt = {
   <matched: MatchedStmt> => matched,
@@ -99,6 +100,11 @@ MatchedStmt: Stmt = {
   "if" "(" <exp: Exp> ")" <then: MatchedStmt> "else" <else_stmt: MatchedStmt> => Stmt::If(exp, Box::new(then), Some(Box::new(else_stmt))),
 
   "return" <exp: Exp> ";" => Stmt::Return(exp),
+
+  "while" "(" <cond: Exp> ")" <body: MatchedStmt> => Stmt::While(cond, Box::new(body)),
+
+  "break" ";" => Stmt::Break,
+  "continue" ";" => Stmt::Continue,
 };
 
 OpenStmt: Stmt = {
@@ -109,6 +115,8 @@ OpenStmt: Stmt = {
   "if" "(" <cond: Exp> ")" <then: MatchedStmt> "else" <else_stmt: OpenStmt> => {
     Stmt::If(cond, Box::new(then), Some(Box::new(else_stmt)))
   },
+
+  "while" "(" <cond: Exp> ")" <body: OpenStmt> => Stmt::While(cond, Box::new(body)),
 }
 
 // Exp ::= LOrExp;
