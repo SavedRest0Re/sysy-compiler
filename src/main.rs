@@ -21,21 +21,21 @@ fn main() -> Result<(), Error> {
     let output = args.next().unwrap();
 
     let input = read_to_string(input).map_err(Error::Io)?;
-    println!("{}", input.clone());
+    // println!("{}", input.clone());
 
     let ast = sysy::CompUnitParser::new().parse(&input).unwrap();
     // println!("{:#?}", ast);
 
     let program = ir::generate_program(ast).map_err(Error::Ir)?;
 
-    {
-        KoopaGenerator::from_path(output.clone())
-            .map_err(Error::Io)?
-            .generate_on(&program)
-            .map_err(Error::Io)?;
-        let ir = read_to_string(output.clone()).unwrap();
-        println!("{}", ir)
-    }
+    // {
+    //     KoopaGenerator::from_path(output.clone())
+    //         .map_err(Error::Io)?
+    //         .generate_on(&program)
+    //         .map_err(Error::Io)?;
+    //     let ir = read_to_string(output.clone()).unwrap();
+    //     println!("{}", ir)
+    // }
 
     match mode.as_str() {
         "-koopa" | "-k" => {

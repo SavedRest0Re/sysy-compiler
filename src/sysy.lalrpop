@@ -10,8 +10,48 @@ match {
   _
 }
 
-// CompUnit ::= FuncDef;
-pub CompUnit: CompUnit = <func_def: FuncDef> => CompUnit { func_def };
+// CompUnit ::= [CompUnit] (Decl | FuncDef)
+pub CompUnit: CompUnit = <items: (GlobalItem)+> => CompUnit { items };
+
+
+// 内联展开 解决 shift/reduce 冲突
+// "int" VarDecl ";"
+// "int" Ident "(" ")" Block
+GlobalItem: GlobalItem = {
+  // <func_def: FuncDef> => GlobalItem::FuncDef(func_def),
+  // <global_decl: Decl> => GlobalItem::GlobalDecl(global_decl),
+
+  <c: ConstDecl> => GlobalItem::GlobalDecl(Decl::Const(c)),
+
+  "void" <ident:Ident> "(" <params:FuncFParams?> ")" <block:Block> => {
+    GlobalItem::FuncDef(FuncDef {
+      ret_ty: FuncType::Void,
+      ident,
+      params,
+      block,
+    })
+  },
+
+  "int" <ident: Ident> "(" <params:FuncFParams?> ")" <block:Block> => {
+    GlobalItem::FuncDef(FuncDef {
+      ret_ty: FuncType::Int,
+      ident,
+      params,
+      block,
+    })
+  },
+
+  "int" <ident: Ident> <init_val: ("=" <InitVal>)?> <rest: ("," <VarDef>)*> ";" => {
+    let mut defs = vec![VarDef { ident, init_val }];
+    defs.extend(rest);
+
+    GlobalItem::GlobalDecl(Decl::Var(VarDecl {
+      btype: BType::Int,
+      defs,
+    }))
+  }
+
+}
 
 // Decl ::= ConstDecl | VarDecl;
 Decl: Decl = {
@@ -35,7 +75,7 @@ BType: BType = {
 
 // ConstDef ::= Ident "=" ConstInitVal;
 ConstDef: ConstDef = {
-  <id: Ident> "=" <init_val: ConstInitVal> => ConstDef { ident: id, init_val },
+  <ident: Ident> "=" <init_val: ConstInitVal> => ConstDef { ident, init_val },
 };
 
 // ConstInitVal ::= ConstExp;
@@ -54,8 +94,8 @@ VarDecl: VarDecl = {
 
 // VarDef ::= IDENT | IDENT "=" InitVal;
 VarDef: VarDef = {
-  <id: Ident> => VarDef { ident: id, init_val: None },
-  <id: Ident> "=" <init_val: InitVal> => VarDef { ident: id, init_val: Some(init_val) },
+  <ident: Ident> => VarDef { ident, init_val: None },
+  <ident: Ident> "=" <init_val: InitVal> => VarDef { ident, init_val: Some(init_val) },
 };
 
 // InitVal ::= Exp;
@@ -65,13 +105,30 @@ InitVal: InitVal = {
 
 // FuncDef ::= FuncType Ident "(" ")" Block
 FuncDef: FuncDef = {
-  <ret_ty: FuncType> <id: Ident> "(" ")" <block: Block> => {
-    FuncDef { ret_ty, ident: id, block }
+  <ret_ty: FuncType> <ident: Ident> "(" <params: FuncFParams?> ")" <block: Block> => {
+    FuncDef { ret_ty, ident, params, block }
   }
-}
+};
 
 // FuncType ::= "int";
-FuncType: FuncType = "int" => FuncType::Int;
+FuncType: FuncType = {
+  "int" => FuncType::Int,
+  "void" => FuncType::Void,
+};
+
+// FuncFParams ::= FuncFParam {"," FuncFParam};
+FuncFParams: FuncFParams = {
+  <h: FuncFParam> <t: ("," <FuncFParam>)*> => {
+    let mut params = vec![h];
+    params.extend(t);
+    FuncFParams { params }
+  }
+};
+
+// FuncFParam ::= BType IDENT;
+FuncFParam: FuncFParam = {
+  <btype: BType> <ident: Ident> => FuncFParam { btype, ident },
+};
 
 // Block ::= "{" {BlockItem} "}";
 Block: Block = {
@@ -136,13 +193,23 @@ PrimaryExp: PrimaryExp = {
   "(" <exp: Exp> ")" => PrimaryExp::Paren(Box::new(exp)),
 };
 
-// UnaryExp ::= PrimaryExp | UnaryOp UnaryExp
+// UnaryExp ::= PrimaryExp | UnaryOp UnaryExp | IDENT "(" [FuncRParams] ")"
 UnaryExp: UnaryExp = {
   <exp: PrimaryExp> => UnaryExp::PrimaryExp(exp),
   <op: UnaryOp> <exp: UnaryExp> => UnaryExp::Unary(
     op,
     Box::new(exp),
   ),
+  <ident: Ident> "(" <params: FuncRParams?> ")" => UnaryExp::FuncCall(ident, params),
+};
+
+// FuncRParams ::= Exp {"," Exp};
+FuncRParams: FuncRParams = {
+  <h: Exp> <t: ("," <Exp>)*> => {
+    let mut args = vec![h];
+    args.extend(t);
+    FuncRParams { args }
+  }
 };
 
 // MulExp ::= UnaryExp | MulExp ("*" | "/" | "%") UnaryExp;

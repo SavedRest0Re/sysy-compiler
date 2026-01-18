@@ -2,7 +2,13 @@ use koopa::ir::BinaryOp;
 
 #[derive(Debug)]
 pub struct CompUnit {
-    pub func_def: FuncDef,
+    pub items: Vec<GlobalItem>,
+}
+
+#[derive(Debug)]
+pub enum GlobalItem {
+    FuncDef(FuncDef),
+    GlobalDecl(Decl),
 }
 
 #[derive(Debug)]
@@ -54,12 +60,25 @@ pub enum InitVal {
 pub struct FuncDef {
     pub ret_ty: FuncType,
     pub ident: String,
+    pub params: Option<FuncFParams>,
     pub block: Block,
 }
 
 #[derive(Debug)]
 pub enum FuncType {
     Int,
+    Void,
+}
+
+#[derive(Debug)]
+pub struct FuncFParams {
+    pub params: Vec<FuncFParam>,
+}
+
+#[derive(Debug)]
+pub struct FuncFParam {
+    pub btype: BType,
+    pub ident: String,
 }
 
 #[derive(Debug)]
@@ -106,6 +125,12 @@ pub enum PrimaryExp {
 pub enum UnaryExp {
     PrimaryExp(PrimaryExp),
     Unary(UnaryOp, Box<UnaryExp>),
+    FuncCall(String, Option<FuncRParams>),
+}
+
+#[derive(Debug)]
+pub struct FuncRParams {
+    pub args: Vec<Exp>,
 }
 
 #[derive(Debug)]

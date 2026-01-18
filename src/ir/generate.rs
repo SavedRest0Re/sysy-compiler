@@ -1,14 +1,15 @@
-use koopa::ir::{BinaryOp, FunctionData, Type, Value};
+use koopa::ir::{BinaryOp, Function, FunctionData, Type, Value, builder::ValueBuilder};
 
 use crate::{
     ast::{
         AddExp, Block, BlockItem, CompUnit, ConstDef, ConstInitVal, Decl, EqExp, Exp, FuncDef,
-        FuncType, InitVal, LAndExp, LOrExp, LVal, MulExp, PrimaryExp, RelExp, Stmt, UnaryExp,
-        UnaryOp, VarDef,
+        FuncType, GlobalItem, InitVal, LAndExp, LOrExp, LVal, MulExp, PrimaryExp, RelExp, Stmt,
+        UnaryExp, UnaryOp, VarDef,
     },
     ir::{
         Error, IRResult,
-        const_eval::consteval,
+        builtin::load_builtins,
+        const_eval::{consteval, consteval_exp},
         ctx::{Ctx, Symbol},
     },
 };
@@ -23,28 +24,92 @@ impl IRGen for CompUnit {
     type Output = ();
 
     fn generate(&self, ctx: &mut Ctx) -> IRResult<Self::Output> {
-        self.func_def.generate(ctx)
+        load_builtins(ctx);
+
+        for item in self.items.iter() {
+            match item {
+                GlobalItem::FuncDef(func_def) => {
+                    let function = create_function(ctx, func_def);
+                    ctx.funcs.insert(func_def.ident.clone(), function);
+                }
+                GlobalItem::GlobalDecl(decl) => {
+                    decl.generate(ctx)?;
+                }
+            }
+        }
+
+        for item in self.items.iter() {
+            match item {
+                GlobalItem::FuncDef(func_def) => {
+                    func_def.generate(ctx)?;
+                }
+                _ => {}
+            }
+        }
+
+        Ok(())
     }
+}
+
+fn create_function(ctx: &mut Ctx, func_def: &FuncDef) -> Function {
+    let ret_ty = func_def.ret_ty.generate(ctx).unwrap();
+    let mut param_tys = vec![];
+    if let Some(ref params) = func_def.params {
+        for p in params.params.iter() {
+            param_tys.push((Some(format!("@{}", p.ident)), Type::get_i32()));
+        }
+    }
+
+    ctx.program.new_func(FunctionData::with_param_names(
+        format!("@{}", func_def.ident),
+        param_tys,
+        ret_ty,
+    ))
 }
 
 impl IRGen for FuncDef {
     type Output = ();
 
     fn generate(&self, ctx: &mut Ctx) -> IRResult<Self::Output> {
-        let func = ctx.program.new_func(FunctionData::new(
-            format!("@{}", self.ident),
-            vec![],
-            Type::get_i32(),
-        ));
-
-        ctx.set_cur_func(func);
+        let function = ctx.funcs.get(&format!("{}", self.ident)).unwrap();
+        ctx.set_cur_func(*function);
+        ctx.symbol_table.enter_scope(); // new scope
 
         // Create entry basic block and set it as current
         let entry_bb = ctx.create_bb(Some("%entry"));
         ctx.set_cur_bb(entry_bb);
 
+        // gen parameter
+        if let Some(ref params) = self.params {
+            for (i, param) in params.params.iter().enumerate() {
+                let var_alloc = ctx.emit_alloc(Type::get_i32());
+                ctx.set_value_name(var_alloc, format!("%{}", param.ident));
+
+                // copy parameter to local variable
+                ctx.emit_store(ctx.func_params()[i], var_alloc);
+
+                // add symbol
+                ctx.symbol_table
+                    .define(param.ident.clone(), Symbol::Var(var_alloc))?;
+            }
+        }
+
         self.block.generate(ctx)?;
 
+        // 有些函数没有显示的 `return` 语句, 需要手动生成对应的 ir.
+        if !ctx.is_cur_bb_terminated() {
+            match self.ret_ty {
+                FuncType::Void => {
+                    ctx.emit_ret(None);
+                }
+                FuncType::Int => {
+                    let zero = ctx.emit_integer(0);
+                    ctx.emit_ret(Some(zero));
+                }
+            }
+        }
+
+        ctx.symbol_table.exit_scope();
         ctx.unset_cur_func();
 
         Ok(())
@@ -57,6 +122,7 @@ impl IRGen for FuncType {
     fn generate(&self, _ctx: &mut Ctx) -> IRResult<Self::Output> {
         Ok(match self {
             FuncType::Int => Type::get_i32(),
+            FuncType::Void => Type::get_unit(),
         })
     }
 }
@@ -184,20 +250,50 @@ impl IRGen for Decl {
     type Output = ();
 
     fn generate(&self, ctx: &mut Ctx) -> IRResult<Self::Output> {
-        match self {
-            Decl::Const(const_decl) => {
-                for def in const_decl.const_defs.iter() {
-                    def.generate(ctx)?;
+        let is_global = ctx.is_global();
+        if is_global {
+            match self {
+                Decl::Const(const_decl) => {
+                    for def in const_decl.const_defs.iter() {
+                        def.generate(ctx)?;
+                    }
                 }
-                Ok(())
+                Decl::Var(var_decl) => {
+                    for def in var_decl.defs.iter() {
+                        let global_ident = format!("@{}", def.ident.clone());
+
+                        let mut init = ctx.program.new_value().zero_init(Type::get_i32());
+                        if let Some(ref init_val) = def.init_val {
+                            let InitVal::Exp(exp) = init_val;
+                            let init_val = consteval_exp(exp, ctx)?;
+                            init = ctx.program.new_value().integer(init_val);
+                        }
+
+                        let galloc = ctx.emit_global_alloc(init);
+                        ctx.program
+                            .set_value_name(galloc, Some(global_ident.clone()));
+
+                        ctx.symbol_table
+                            .define(def.ident.clone(), Symbol::Var(galloc))?;
+                    }
+                }
             }
-            Decl::Var(var_decl) => {
-                for def in var_decl.defs.iter() {
-                    def.generate(ctx)?;
+        } else {
+            match self {
+                Decl::Const(const_decl) => {
+                    for def in const_decl.const_defs.iter() {
+                        def.generate(ctx)?;
+                    }
                 }
-                Ok(())
+                Decl::Var(var_decl) => {
+                    for def in var_decl.defs.iter() {
+                        def.generate(ctx)?;
+                    }
+                }
             }
         }
+
+        Ok(())
     }
 }
 
@@ -226,7 +322,7 @@ impl IRGen for VarDef {
 
     fn generate(&self, ctx: &mut Ctx) -> IRResult<Self::Output> {
         let var_alloc = ctx.emit_alloc(Type::get_i32()); // BType must be i32
-        let vir_reg_name = ctx.unique_name(format!("@{}", self.ident));
+        let vir_reg_name = format!("@{}_{}", self.ident, ctx.fetch_counter());
         ctx.set_value_name(var_alloc, vir_reg_name);
 
         if let Some(ref init_val) = self.init_val {
@@ -409,6 +505,18 @@ impl IRGen for UnaryExp {
                 };
 
                 Ok(result)
+            }
+            UnaryExp::FuncCall(fname, arg_exps) => {
+                let function = ctx.funcs.get(fname).cloned().ok_or(Error::SymbolNotFound)?;
+
+                let mut args = vec![];
+                if let Some(arg_exps) = arg_exps {
+                    for arg_exp in arg_exps.args.iter() {
+                        args.push(arg_exp.generate(ctx)?);
+                    }
+                }
+
+                Ok(ctx.emit_call(function, args))
             }
         }
     }

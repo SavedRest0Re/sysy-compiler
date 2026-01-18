@@ -2,20 +2,18 @@ use std::collections::HashMap;
 
 use koopa::ir::{BasicBlock, Function, FunctionData, Program, Value};
 
-// t0-t6 + a1-a7 for temporary registers
+// t0-t6 for temporary registers
 pub struct RegAlloc {
     regs: Vec<bool>,
     used_by_value: HashMap<Value, usize>,
 }
 
 impl RegAlloc {
-    const REGS: [&str; 14] = [
-        "t0", "t1", "t2", "t3", "t4", "t5", "t6", "a1", "a2", "a3", "a4", "a5", "a6", "a7",
-    ];
+    const REGS: [&str; 7] = ["t0", "t1", "t2", "t3", "t4", "t5", "t6"];
 
     pub fn new() -> Self {
         Self {
-            regs: vec![false; 7 + 7],
+            regs: vec![false; 7],
             used_by_value: HashMap::new(),
         }
     }
@@ -77,6 +75,10 @@ pub struct Ctx<'a> {
     pub stack_size: usize,
     // virtual register -> offset relative to sp
     pub stack_alloc: HashMap<Value, usize>,
+
+    // static call frame layout
+    pub outgoing_args_size: usize,
+    pub arg_save_base: usize, // a0-a7 保存位置, 相对 sp.
 }
 
 impl<'a> Ctx<'a> {
@@ -90,7 +92,14 @@ impl<'a> Ctx<'a> {
 
             stack_size: 0,
             stack_alloc: HashMap::new(),
+
+            outgoing_args_size: 0,
+            arg_save_base: 0,
         }
+    }
+
+    pub fn program(&self) -> &'a Program {
+        self.program
     }
 
     pub fn set_reg_alloc(&mut self, reg_alloc: RegAlloc) {
@@ -189,6 +198,23 @@ impl<'a> Ctx<'a> {
 
     pub fn stack_offset(&self, value: &Value) -> Option<i32> {
         self.stack_alloc.get(value).map(|&v| v as i32)
+    }
+
+    pub fn outgoing_arg_offset(&self, index: usize) -> i32 {
+        (index * 4) as i32
+    }
+
+    pub fn saved_arg_offset(&self, index: usize) -> i32 {
+        self.arg_save_base as i32 + (index * 4) as i32
+    }
+
+    pub fn incoming_stack_arg_offset(&self, index: usize) -> i32 {
+        debug_assert!(index >= 8);
+        self.stack_size as i32 + ((index - 8) * 4) as i32
+    }
+
+    pub fn ra_offset(&self) -> i32 {
+        (self.stack_size - 4) as i32
     }
 
     pub fn bb_label(&self, bb: BasicBlock) -> String {

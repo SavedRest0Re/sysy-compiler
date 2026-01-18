@@ -13,7 +13,7 @@ pub fn consteval(cexp: &ConstExp, ctx: &Ctx) -> IRResult<i32> {
     consteval_exp(&cexp.exp, ctx)
 }
 
-fn consteval_exp(exp: &Exp, ctx: &Ctx) -> IRResult<i32> {
+pub fn consteval_exp(exp: &Exp, ctx: &Ctx) -> IRResult<i32> {
     match exp {
         Exp::LOr(lor) => consteval_lor(lor, ctx),
     }
@@ -129,6 +129,7 @@ fn consteval_unary(exp: &UnaryExp, ctx: &Ctx) -> IRResult<i32> {
                 }
             })
         }
+        UnaryExp::FuncCall(_, _) => unreachable!(),
     }
 }
 

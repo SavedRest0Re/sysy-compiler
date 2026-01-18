@@ -2,7 +2,7 @@ use std::collections::HashMap;
 
 use koopa::ir::{
     BasicBlock, BinaryOp, Function, FunctionData, Program, Type, Value, ValueKind,
-    builder::{BasicBlockBuilder, LocalInstBuilder, ValueBuilder},
+    builder::{BasicBlockBuilder, GlobalInstBuilder, LocalInstBuilder, ValueBuilder},
 };
 
 use crate::ir::{Error, IRResult};
@@ -14,7 +14,7 @@ pub enum Symbol {
 }
 
 pub struct SymbolTable {
-    scopes: Vec<HashMap<String, Symbol>>,
+    scopes: Vec<HashMap<String, Symbol>>, // no `@` prefix
 }
 
 impl SymbolTable {
@@ -46,6 +46,8 @@ impl SymbolTable {
 }
 
 pub struct Ctx {
+    pub funcs: HashMap<String, Function>, // no `@` prefix
+
     pub program: Program,
     pub cur_func: Option<Function>,
     pub cur_bb: Option<BasicBlock>,
@@ -58,6 +60,8 @@ pub struct Ctx {
 impl Ctx {
     pub fn new() -> Self {
         Self {
+            funcs: HashMap::new(),
+
             program: Program::new(),
             cur_func: None,
             cur_bb: None,
@@ -68,16 +72,24 @@ impl Ctx {
         }
     }
 
+    pub fn is_global(&self) -> bool {
+        self.symbol_table.scopes.len() == 1
+    }
+
     pub fn set_cur_func(&mut self, func: Function) {
         self.cur_func = Some(func);
+
+        self.cur_bb = None;
+        self.loop_stack = vec![];
     }
 
     pub fn unset_cur_func(&mut self) {
         self.cur_func = None;
+
         self.cur_bb = None;
+        self.loop_stack = vec![];
     }
 
-    #[allow(dead_code)]
     pub fn func_data(&self) -> &FunctionData {
         self.program.func(self.cur_func.unwrap())
     }
@@ -86,16 +98,14 @@ impl Ctx {
         self.program.func_mut(self.cur_func.unwrap())
     }
 
+    pub fn func_params(&self) -> &[Value] {
+        self.func_data().params()
+    }
+
     pub fn fetch_counter(&mut self) -> u32 {
         let counter = self.counter;
         self.counter += 1;
         counter
-    }
-
-    pub fn unique_name(&mut self, ident: String) -> String {
-        let name = format!("{}_{}", ident, self.counter);
-        self.counter += 1;
-        name
     }
 
     pub fn cur_bb(&self) -> BasicBlock {
@@ -175,9 +185,20 @@ impl Ctx {
         self.add_inst(inst);
     }
 
+    pub fn emit_call(&mut self, func: Function, args: Vec<Value>) -> Value {
+        let inst = self.func_data_mut().dfg_mut().new_value().call(func, args);
+        self.add_inst(inst);
+        inst
+    }
+
     pub fn emit_alloc(&mut self, ty: Type) -> Value {
         let inst = self.func_data_mut().dfg_mut().new_value().alloc(ty);
         self.add_inst(inst);
+        inst
+    }
+
+    pub fn emit_global_alloc(&mut self, init: Value) -> Value {
+        let inst = self.program.new_value().global_alloc(init);
         inst
     }
 

@@ -6,6 +6,10 @@ pub enum RVInst {
         rd: &'static str,
         imm12: i32,
     },
+    La {
+        rd: &'static str,
+        label: String,
+    },
     Lw {
         rd: &'static str,
         rs1: &'static str,
@@ -44,7 +48,6 @@ pub enum RVInst {
         rs1: &'static str,
         imm12: i32,
     },
-    Ret,
     Mv {
         rd: &'static str,
         rs: &'static str,
@@ -91,12 +94,17 @@ pub enum RVInst {
     J {
         label: String,
     },
+    Ret,
+    Call {
+        label: String,
+    },
 }
 
 impl RVInst {
     pub fn to_string(&self) -> String {
         match self {
             RVInst::Li { rd, imm12 } => format!("li {}, {}", rd, imm12),
+            RVInst::La { rd, label } => format!("la {}, {}", rd, label),
             RVInst::Lw { rd, rs1, offset } => format!("lw {}, {}({})", rd, offset, rs1),
             RVInst::Sw { rs2, rs1, offset } => format!("sw {}, {}({})", rs2, offset, rs1),
             RVInst::Xor { rd, rs1, rs2 } => format!("xor {}, {}, {}", rd, rs1, rs2),
@@ -116,6 +124,7 @@ impl RVInst {
             RVInst::Or { rd, rs1, rs2 } => format!("or {}, {}, {}", rd, rs1, rs2),
             RVInst::Bnez { rs, label } => format!("bnez {}, {}", rs, label),
             RVInst::J { label } => format!("j {}", label),
+            RVInst::Call { label } => format!("call {}", label),
         }
     }
 
