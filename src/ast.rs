@@ -32,11 +32,13 @@ pub enum BType {
 pub struct ConstDef {
     pub ident: String,
     pub init_val: ConstInitVal,
+    pub dims: Vec<ConstExp>,
 }
 
 #[derive(Debug)]
 pub enum ConstInitVal {
     ConstExp(ConstExp),
+    ConstInitList(Vec<ConstInitVal>),
 }
 
 #[derive(Debug)]
@@ -49,11 +51,13 @@ pub struct VarDecl {
 pub struct VarDef {
     pub ident: String,
     pub init_val: Option<InitVal>,
+    pub dims: Vec<ConstExp>,
 }
 
 #[derive(Debug)]
 pub enum InitVal {
     Exp(Exp),
+    InitList(Vec<InitVal>),
 }
 
 #[derive(Debug)]
@@ -79,6 +83,7 @@ pub struct FuncFParams {
 pub struct FuncFParam {
     pub btype: BType,
     pub ident: String,
+    pub dims: Vec<Option<ConstExp>>,
 }
 
 #[derive(Debug)]
@@ -95,7 +100,7 @@ pub enum BlockItem {
 #[derive(Debug)]
 pub enum Stmt {
     Assign(LVal, Exp),
-    Return(Exp),
+    Return(Option<Exp>),
     Exp(Option<Exp>),
     If(Exp, Box<Stmt>, Option<Box<Stmt>>),
     Block(Block),
@@ -111,7 +116,7 @@ pub enum Exp {
 
 #[derive(Debug)]
 pub enum LVal {
-    Ident(String),
+    GLVal(String, Vec<Exp>),
 }
 
 #[derive(Debug)]

@@ -1,3 +1,4 @@
+mod array;
 pub mod builtin;
 mod const_eval;
 mod ctx;
@@ -7,12 +8,16 @@ use std::fmt::{self};
 
 use koopa::ir::Program;
 
-use crate::{
-    ast::*,
-    ir::{ctx::Ctx, generate::IRGen},
-};
+use self::ctx::Ctx;
+use crate::ast::*;
 
 pub type IRResult<T> = std::result::Result<T, Error>;
+
+pub trait IRGen {
+    type Output;
+
+    fn generate(&self, ctx: &mut Ctx) -> IRResult<Self::Output>;
+}
 
 pub enum Error {
     DuplicatedDef,

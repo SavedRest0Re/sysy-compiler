@@ -41,8 +41,8 @@ GlobalItem: GlobalItem = {
     })
   },
 
-  "int" <ident: Ident> <init_val: ("=" <InitVal>)?> <rest: ("," <VarDef>)*> ";" => {
-    let mut defs = vec![VarDef { ident, init_val }];
+  "int" <var_def: VarDef> <rest: ("," <VarDef>)*> ";" => {
+    let mut defs = vec![var_def];
     defs.extend(rest);
 
     GlobalItem::GlobalDecl(Decl::Var(VarDecl {
@@ -73,14 +73,21 @@ BType: BType = {
   "int" => BType::Int,
 };
 
-// ConstDef ::= Ident "=" ConstInitVal;
+// ConstDef ::= IDENT {"[" ConstExp "]"} "=" ConstInitVal;
 ConstDef: ConstDef = {
-  <ident: Ident> "=" <init_val: ConstInitVal> => ConstDef { ident, init_val },
+  <ident: Ident> <dims: ("[" <ConstExp> "]")*> "=" <init_val: ConstInitVal> => ConstDef { ident, init_val, dims },
 };
 
-// ConstInitVal ::= ConstExp;
+// ConstInitVal ::= ConstExp | "{" [ConstInitVal {"," ConstInitVal}] "}";
+// { 0, {1}, 2, {3, {4}} }
 ConstInitVal: ConstInitVal = {
   <exp: ConstExp> => ConstInitVal::ConstExp(exp),
+  "{" "}" => ConstInitVal::ConstInitList(vec![]),
+  "{" <h: ConstInitVal> <t: ("," <ConstInitVal>)*> "}" => {
+    let mut const_init_list = vec![h];
+    const_init_list.extend(t);
+    ConstInitVal::ConstInitList(const_init_list)
+  }
 };
 
 // VarDecl ::= BType VarDef {"," VarDef} ";";
@@ -92,15 +99,21 @@ VarDecl: VarDecl = {
   }
 };
 
-// VarDef ::= IDENT | IDENT "=" InitVal;
+// VarDef ::= IDENT {"[" ConstExp "]"} | IDENT {"[" ConstExp "]"} "=" InitVal;
 VarDef: VarDef = {
-  <ident: Ident> => VarDef { ident, init_val: None },
-  <ident: Ident> "=" <init_val: InitVal> => VarDef { ident, init_val: Some(init_val) },
+  <ident: Ident> <dims: ("[" <ConstExp> "]")*> => VarDef { ident, init_val: None, dims },
+  <ident: Ident> <dims: ("[" <ConstExp> "]")*> "=" <init_val: InitVal> => VarDef { ident, init_val: Some(init_val), dims },
 };
 
-// InitVal ::= Exp;
+// InitVal ::= Exp | "{" [InitVal {"," InitVal}] "}";
 InitVal: InitVal = {
   <exp: Exp> => InitVal::Exp(exp),
+  "{" "}" => InitVal::InitList(vec![]),
+  "{" <h: InitVal> <t: ("," <InitVal>)*> "}" => {
+    let mut init_list = vec![h];
+    init_list.extend(t);
+    InitVal::InitList(init_list)
+  }
 };
 
 // FuncDef ::= FuncType Ident "(" ")" Block
@@ -125,9 +138,16 @@ FuncFParams: FuncFParams = {
   }
 };
 
-// FuncFParam ::= BType IDENT;
+// FuncFParam ::= BType IDENT ["[" "]" {"[" ConstExp "]"}];
 FuncFParam: FuncFParam = {
-  <btype: BType> <ident: Ident> => FuncFParam { btype, ident },
+  <btype: BType> <ident: Ident> => FuncFParam { btype, ident, dims: vec![] },
+  <btype: BType> <ident: Ident> "[" "]" <dims: ("[" <ConstExp> "]")*> => {
+    let mut ds = vec![None];
+    for d in dims {
+      ds.push(Some(d));
+    }
+    FuncFParam { btype, ident, dims: ds }
+  }
 };
 
 // Block ::= "{" {BlockItem} "}";
@@ -156,7 +176,7 @@ MatchedStmt: Stmt = {
 
   "if" "(" <exp: Exp> ")" <then: MatchedStmt> "else" <else_stmt: MatchedStmt> => Stmt::If(exp, Box::new(then), Some(Box::new(else_stmt))),
 
-  "return" <exp: Exp> ";" => Stmt::Return(exp),
+  "return" <exp: Exp?> ";" => Stmt::Return(exp),
 
   "while" "(" <cond: Exp> ")" <body: MatchedStmt> => Stmt::While(cond, Box::new(body)),
 
@@ -181,9 +201,11 @@ Exp: Exp = {
   <exp: LOrExp> => Exp::LOr(exp),
 };
 
-// LVal ::= IDENT;
+// LVal ::= IDENT {"[" Exp "]"};;
 LVal: LVal = {
-  <id: Ident> => LVal::Ident(id),
+  <id: Ident> <dims: ("[" <Exp> "]")*> => {
+    LVal::GLVal(id, dims)
+  }
 };
 
 // PrimaryExp ::= "(" Exp ")" | LVal | Number;

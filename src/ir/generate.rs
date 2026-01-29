@@ -1,4 +1,4 @@
-use koopa::ir::{BinaryOp, Function, FunctionData, Type, Value, builder::ValueBuilder};
+use koopa::ir::{BinaryOp, Function, FunctionData, Type, TypeKind, Value, builder::ValueBuilder};
 
 use crate::{
     ast::{
@@ -7,18 +7,17 @@ use crate::{
         UnaryExp, UnaryOp, VarDef,
     },
     ir::{
-        Error, IRResult,
+        Error, IRGen, IRResult,
+        array::{
+            build_array_type, build_const_aggregate, build_param_ty, emit_elem_ptr_by_indices,
+            eval_array_dims, flatten_const_init, flatten_init, flattenindex_to_indices,
+            lval_address,
+        },
         builtin::load_builtins,
         const_eval::{consteval, consteval_exp},
         ctx::{Ctx, Symbol},
     },
 };
-
-pub trait IRGen {
-    type Output;
-
-    fn generate(&self, ctx: &mut Ctx) -> IRResult<Self::Output>;
-}
 
 impl IRGen for CompUnit {
     type Output = ();
@@ -56,7 +55,8 @@ fn create_function(ctx: &mut Ctx, func_def: &FuncDef) -> Function {
     let mut param_tys = vec![];
     if let Some(ref params) = func_def.params {
         for p in params.params.iter() {
-            param_tys.push((Some(format!("@{}", p.ident)), Type::get_i32()));
+            let ty = build_param_ty(p, ctx).unwrap();
+            param_tys.push((Some(format!("@{}", p.ident)), ty));
         }
     }
 
@@ -82,7 +82,8 @@ impl IRGen for FuncDef {
         // gen parameter
         if let Some(ref params) = self.params {
             for (i, param) in params.params.iter().enumerate() {
-                let var_alloc = ctx.emit_alloc(Type::get_i32());
+                let ty = build_param_ty(param, ctx)?;
+                let var_alloc = ctx.emit_alloc(ty);
                 ctx.set_value_name(var_alloc, format!("%{}", param.ident));
 
                 // copy parameter to local variable
@@ -154,21 +155,22 @@ impl IRGen for Stmt {
             Stmt::Assign(lval, exp) => {
                 let rhs_value = exp.generate(ctx)?;
 
-                let LVal::Ident(ident) = lval;
-
-                let var = match ctx.symbol_table.resolve(ident) {
-                    Some(sym) => match sym {
-                        Symbol::Const(_) => panic!("\"{ident}\" is a constant, not a variable"),
-                        Symbol::Var(var) => *var,
+                let addr = lval_address(ctx, lval)?;
+                match ctx.value_type(addr).kind() {
+                    TypeKind::Pointer(pointee) => match pointee.kind() {
+                        TypeKind::Array(_, _) => return Err(Error::ArrayAssign),
+                        _ => {}
                     },
-                    None => panic!("undefined: \"{ident}\""),
-                };
-
-                ctx.emit_store(rhs_value, var);
+                    _ => {}
+                }
+                ctx.emit_store(rhs_value, addr);
             }
             Stmt::Return(exp) => {
-                let result = exp.generate(ctx)?;
-                ctx.emit_ret(Some(result));
+                let result = match exp {
+                    Some(exp) => Some(exp.generate(ctx)?),
+                    None => None,
+                };
+                ctx.emit_ret(result);
                 // return must terminate the basic block
                 // ctx.unset_cur_bb();
             }
@@ -262,12 +264,31 @@ impl IRGen for Decl {
                     for def in var_decl.defs.iter() {
                         let global_ident = format!("@{}", def.ident.clone());
 
-                        let mut init = ctx.program.new_value().zero_init(Type::get_i32());
-                        if let Some(ref init_val) = def.init_val {
-                            let InitVal::Exp(exp) = init_val;
-                            let init_val = consteval_exp(exp, ctx)?;
-                            init = ctx.program.new_value().integer(init_val);
-                        }
+                        let dims = eval_array_dims(&def.dims, ctx)?;
+                        let (_ty, init) = if dims.is_empty() {
+                            let mut init = ctx.program.new_value().zero_init(Type::get_i32());
+                            if let Some(ref init_val) = def.init_val {
+                                let InitVal::Exp(exp) = init_val else {
+                                    return Err(Error::InvalidInit);
+                                };
+                                let init_val = consteval_exp(exp, ctx)?;
+                                init = ctx.program.new_value().integer(init_val);
+                            }
+                            (Type::get_i32(), init)
+                        } else {
+                            let ty = build_array_type(&dims);
+                            let flat = flatten_init(&dims, def.init_val.as_ref())?;
+                            let mut vals = Vec::with_capacity(flat.len());
+                            for e in flat {
+                                let v = match e {
+                                    Some(exp) => consteval_exp(exp, ctx)?,
+                                    None => 0,
+                                };
+                                vals.push(v);
+                            }
+                            let init = build_const_aggregate(ctx, ty.clone(), &vals);
+                            (ty, init)
+                        };
 
                         let galloc = ctx.emit_global_alloc(init);
                         ctx.program
@@ -301,9 +322,52 @@ impl IRGen for ConstDef {
     type Output = ();
 
     fn generate(&self, ctx: &mut Ctx) -> IRResult<Self::Output> {
-        let result = self.init_val.generate(ctx)?;
+        let dims = eval_array_dims(&self.dims, ctx)?;
+        if dims.is_empty() {
+            let result = self.init_val.generate(ctx)?;
+            ctx.symbol_table
+                .define(self.ident.clone(), Symbol::Const(result))?;
+            return Ok(());
+        }
+
+        let ty = build_array_type(&dims);
+        let flat = flatten_const_init(&dims, &self.init_val)?;
+        let mut vals = Vec::with_capacity(flat.len());
+        for e in flat {
+            let v = match e {
+                Some(ce) => consteval(ce, ctx)?,
+                None => 0,
+            };
+            vals.push(v);
+        }
+
+        let var = if ctx.is_global() {
+            let init = build_const_aggregate(ctx, ty.clone(), &vals);
+            let galloc = ctx.emit_global_alloc(init);
+            ctx.program
+                .set_value_name(galloc, Some(format!("@{}", self.ident.clone())));
+            galloc
+        } else {
+            let alloc = ctx.emit_alloc(ty.clone());
+            let vir_reg_name = format!("@{}_{}", self.ident, ctx.fetch_counter());
+            ctx.set_value_name(alloc, vir_reg_name);
+            // 逐元素初始化
+            for (i, v) in vals.iter().enumerate() {
+                let indices = flattenindex_to_indices(&dims, i);
+                let mut idx_vals = Vec::with_capacity(indices.len());
+                for idx in indices {
+                    idx_vals.push(ctx.emit_integer(idx as i32));
+                }
+                let elem_ptr = emit_elem_ptr_by_indices(ctx, alloc, &idx_vals);
+                let iv = ctx.emit_integer(*v);
+                ctx.emit_store(iv, elem_ptr);
+            }
+            alloc
+        };
+
+        // FIXME: const array 似乎不需要注册到 symbol table
         ctx.symbol_table
-            .define(self.ident.clone(), Symbol::Const(result))?;
+            .define(self.ident.clone(), Symbol::Var(var))?;
         Ok(())
     }
 }
@@ -312,8 +376,10 @@ impl IRGen for ConstInitVal {
     type Output = i32;
 
     fn generate(&self, ctx: &mut Ctx) -> IRResult<Self::Output> {
-        let ConstInitVal::ConstExp(const_exp) = self;
-        Ok(consteval(const_exp, ctx)?)
+        match self {
+            ConstInitVal::ConstExp(const_exp) => Ok(consteval(const_exp, ctx)?),
+            ConstInitVal::ConstInitList(_) => Err(Error::InvalidInit),
+        }
     }
 }
 
@@ -321,14 +387,41 @@ impl IRGen for VarDef {
     type Output = ();
 
     fn generate(&self, ctx: &mut Ctx) -> IRResult<Self::Output> {
-        let var_alloc = ctx.emit_alloc(Type::get_i32()); // BType must be i32
+        let dims = eval_array_dims(&self.dims, ctx)?;
+        let ty = if dims.is_empty() {
+            Type::get_i32()
+        } else {
+            build_array_type(&dims)
+        };
+
+        let var_alloc = ctx.emit_alloc(ty);
         let vir_reg_name = format!("@{}_{}", self.ident, ctx.fetch_counter());
         ctx.set_value_name(var_alloc, vir_reg_name);
 
-        if let Some(ref init_val) = self.init_val {
-            let InitVal::Exp(exp) = init_val;
-            let init_value = exp.generate(ctx)?;
-            ctx.emit_store(init_value, var_alloc);
+        if dims.is_empty() {
+            if let Some(ref init_val) = self.init_val {
+                let InitVal::Exp(exp) = init_val else {
+                    return Err(Error::InvalidInit);
+                };
+                let init_value = exp.generate(ctx)?;
+                ctx.emit_store(init_value, var_alloc);
+            }
+        } else if self.init_val.is_some() {
+            let flat = flatten_init(&dims, self.init_val.as_ref())?;
+            let zero = ctx.emit_integer(0);
+            for (i, e) in flat.into_iter().enumerate() {
+                let indices = flattenindex_to_indices(&dims, i);
+                let mut idx_vals = Vec::with_capacity(indices.len());
+                for idx in indices {
+                    idx_vals.push(ctx.emit_integer(idx as i32));
+                }
+                let elem_ptr = emit_elem_ptr_by_indices(ctx, var_alloc, &idx_vals);
+                let v = match e {
+                    Some(exp) => exp.generate(ctx)?,
+                    None => zero,
+                };
+                ctx.emit_store(v, elem_ptr);
+            }
         }
 
         ctx.symbol_table
@@ -530,7 +623,7 @@ impl IRGen for PrimaryExp {
             PrimaryExp::Number(num) => Ok(ctx.emit_integer(*num)),
             PrimaryExp::Paren(exp) => exp.generate(ctx),
             PrimaryExp::LVal(lval) => {
-                let LVal::Ident(ident) = lval;
+                let LVal::GLVal(ident, dims) = lval;
                 let sym = *ctx
                     .symbol_table
                     .resolve(ident)
@@ -538,7 +631,36 @@ impl IRGen for PrimaryExp {
 
                 match sym {
                     Symbol::Const(c) => Ok(ctx.emit_integer(c)),
-                    Symbol::Var(var) => Ok(ctx.emit_load(var)),
+                    Symbol::Var(var) => {
+                        if dims.is_empty() {
+                            match ctx.value_type(var).kind() {
+                                TypeKind::Pointer(pointee) => match pointee.kind() {
+                                    TypeKind::Array(_, _) => {
+                                        // Suppose int a[3][4];
+                                        // `a` 应该返回 `&a[0]`
+                                        let zero = ctx.emit_integer(0);
+                                        Ok(ctx.emit_get_elem_ptr(var, zero))
+                                    }
+                                    _ => Ok(ctx.emit_load(var)),
+                                },
+                                _ => Ok(ctx.emit_load(var)),
+                            }
+                        } else {
+                            let addr = lval_address(ctx, lval)?;
+                            match ctx.value_type(addr).kind() {
+                                TypeKind::Pointer(pointee) => match pointee.kind() {
+                                    TypeKind::Array(_, _) => {
+                                        // Suppose int a[3][4];
+                                        // `a[1]` should return `&a[1][0]`
+                                        let zero = ctx.emit_integer(0);
+                                        Ok(ctx.emit_get_elem_ptr(addr, zero))
+                                    }
+                                    _ => Ok(ctx.emit_load(addr)),
+                                },
+                                _ => Ok(ctx.emit_load(addr)),
+                            }
+                        }
+                    }
                 }
             }
         }

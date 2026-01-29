@@ -1,7 +1,26 @@
 use std::fs::File;
 use std::io::Write;
 
-use koopa::ir::{Program, TypeKind, ValueKind};
+use koopa::ir::{Program, Value, ValueKind};
+
+fn emit_init(program: &Program, v: Value, buf: &mut File) {
+    let v_data = program.borrow_value(v);
+    match v_data.kind() {
+        ValueKind::Integer(i) => {
+            writeln!(buf, "  .word {}", i.value()).unwrap();
+        }
+        ValueKind::ZeroInit(_) => {
+            let size = v_data.ty().size();
+            writeln!(buf, "  .zero {}", size).unwrap();
+        }
+        ValueKind::Aggregate(agg) => {
+            for &e in agg.elems() {
+                emit_init(program, e, buf);
+            }
+        }
+        _ => unimplemented!(),
+    }
+}
 
 pub fn generate_data_section(program: &Program, buf: &mut File) {
     for &inst in program.inst_layout() {
@@ -16,19 +35,7 @@ pub fn generate_data_section(program: &Program, buf: &mut File) {
         writeln!(buf, "  .global {name}").unwrap();
         writeln!(buf, "{name}:").unwrap();
 
-        let init_data = program.borrow_value(alloc.init());
-        match init_data.kind() {
-            ValueKind::Integer(i) => {
-                writeln!(buf, "  .word {}\n", i.value()).unwrap();
-            }
-            ValueKind::ZeroInit(_) => {
-                let size = match inst_data.ty().kind() {
-                    TypeKind::Pointer(base_ty) => base_ty.size(),
-                    _ => unimplemented!(),
-                };
-                writeln!(buf, "  .zero {}\n", size).unwrap();
-            }
-            _ => unimplemented!(),
-        }
+        emit_init(program, alloc.init(), buf);
+        writeln!(buf).unwrap();
     }
 }

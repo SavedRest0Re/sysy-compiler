@@ -3,6 +3,7 @@ pub mod ast;
 pub mod ir;
 
 use koopa::back::KoopaGenerator;
+use koopa::ir::Type;
 use lalrpop_util::lalrpop_mod;
 use std::env::args;
 use std::fs::read_to_string;
@@ -25,6 +26,9 @@ fn main() -> Result<(), Error> {
 
     let ast = sysy::CompUnitParser::new().parse(&input).unwrap();
     // println!("{:#?}", ast);
+
+    // 设置 Koopa IR 适配 riscv32 的指针宽度, 而非宿主机的指针宽度
+    Type::set_ptr_size(4);
 
     let program = ir::generate_program(ast).map_err(Error::Ir)?;
 

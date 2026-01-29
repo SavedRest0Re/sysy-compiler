@@ -102,6 +102,14 @@ impl Ctx {
         self.func_data().params()
     }
 
+    pub fn value_type(&self, value: Value) -> Type {
+        if value.is_global() {
+            self.program.borrow_value(value).ty().clone()
+        } else {
+            self.func_data().dfg().value(value).ty().clone()
+        }
+    }
+
     pub fn fetch_counter(&mut self) -> u32 {
         let counter = self.counter;
         self.counter += 1;
@@ -187,6 +195,26 @@ impl Ctx {
 
     pub fn emit_call(&mut self, func: Function, args: Vec<Value>) -> Value {
         let inst = self.func_data_mut().dfg_mut().new_value().call(func, args);
+        self.add_inst(inst);
+        inst
+    }
+
+    pub fn emit_get_ptr(&mut self, src: Value, index: Value) -> Value {
+        let inst = self
+            .func_data_mut()
+            .dfg_mut()
+            .new_value()
+            .get_ptr(src, index);
+        self.add_inst(inst);
+        inst
+    }
+
+    pub fn emit_get_elem_ptr(&mut self, src: Value, index: Value) -> Value {
+        let inst = self
+            .func_data_mut()
+            .dfg_mut()
+            .new_value()
+            .get_elem_ptr(src, index);
         self.add_inst(inst);
         inst
     }

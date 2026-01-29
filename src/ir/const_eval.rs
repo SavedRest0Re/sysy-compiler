@@ -143,7 +143,8 @@ fn consteval_primary(exp: &PrimaryExp, ctx: &Ctx) -> IRResult<i32> {
 
 fn consteval_lval(exp: &LVal, ctx: &Ctx) -> IRResult<i32> {
     match exp {
-        LVal::Ident(ident) => match ctx.symbol_table.resolve(ident) {
+        // TODO:
+        LVal::GLVal(ident, dims) => match ctx.symbol_table.resolve(ident) {
             Some(sym) => match sym {
                 Symbol::Const(c) => Ok(*c),
                 Symbol::Var(_) => Err(Error::FailedToEval), // variable is not a compile-time constant

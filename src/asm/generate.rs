@@ -1,5 +1,5 @@
 use koopa::ir::{
-    BasicBlock, BinaryOp, Function, FunctionData, Program, TypeKind, Value, ValueKind,
+    BasicBlock, BinaryOp, Function, FunctionData, Program, Type, TypeKind, Value, ValueKind,
 };
 
 use std::{
@@ -16,45 +16,120 @@ use crate::asm::{
 
 const ARG_REGS: [&str; 8] = ["a0", "a1", "a2", "a3", "a4", "a5", "a6", "a7"];
 
-fn save_caller_regs(ctx: &Ctx, buf: &mut File) {
-    for (i, reg) in ARG_REGS.iter().enumerate() {
-        RVInst::Sw {
-            rs2: reg,
+fn fits_i12(x: i32) -> bool {
+    (-2048..=2047).contains(&x)
+}
+
+fn emit_add_sp_imm_or_tmp(ctx: &mut Ctx, buf: &mut File, rd: &'static str, off: i32) -> Result<()> {
+    if fits_i12(off) {
+        RVInst::Addi {
+            rd,
             rs1: "sp",
-            offset: ctx.saved_arg_offset(i),
+            imm12: off,
         }
         .emit_indent2(buf)
-        .unwrap();
+    } else {
+        let tmp = ctx.alloc_reg(None);
+        RVInst::Li {
+            rd: RegAlloc::literal(tmp),
+            imm12: off,
+        }
+        .emit_indent2(buf)?;
+        RVInst::Add {
+            rd,
+            rs1: "sp",
+            rs2: RegAlloc::literal(tmp),
+        }
+        .emit_indent2(buf)?;
+        ctx.free_reg(tmp);
+        Ok(())
+    }
+}
+
+fn emit_lw_sp_offset(ctx: &mut Ctx, buf: &mut File, rd: &'static str, off: i32) -> Result<()> {
+    if fits_i12(off) {
+        RVInst::Lw {
+            rd,
+            rs1: "sp",
+            offset: off,
+        }
+        .emit_indent2(buf)
+    } else {
+        let addr = ctx.alloc_reg(None);
+        emit_add_sp_imm_or_tmp(ctx, buf, RegAlloc::literal(addr), off)?;
+        RVInst::Lw {
+            rd,
+            rs1: RegAlloc::literal(addr),
+            offset: 0,
+        }
+        .emit_indent2(buf)?;
+        ctx.free_reg(addr);
+        Ok(())
+    }
+}
+
+fn emit_sw_sp_offset(ctx: &mut Ctx, buf: &mut File, rs2: &'static str, off: i32) -> Result<()> {
+    if fits_i12(off) {
+        RVInst::Sw {
+            rs2,
+            rs1: "sp",
+            offset: off,
+        }
+        .emit_indent2(buf)
+    } else {
+        let addr = ctx.alloc_reg(None);
+        emit_add_sp_imm_or_tmp(ctx, buf, RegAlloc::literal(addr), off)?;
+        RVInst::Sw {
+            rs2,
+            rs1: RegAlloc::literal(addr),
+            offset: 0,
+        }
+        .emit_indent2(buf)?;
+        ctx.free_reg(addr);
+        Ok(())
+    }
+}
+
+fn save_caller_regs(ctx: &mut Ctx, buf: &mut File) {
+    for (i, reg) in ARG_REGS.iter().enumerate() {
+        emit_sw_sp_offset(ctx, buf, reg, ctx.saved_arg_offset(i)).unwrap();
     }
 }
 
 // 如果函数有返回值, 返回值放在 a0, 恢复 caller-saved 时跳过 a0.
-fn restore_caller_regs(ctx: &Ctx, buf: &mut File, keep_a0: bool) {
+fn restore_caller_regs_mut(ctx: &mut Ctx, buf: &mut File, keep_a0: bool) {
     let restore_from = if keep_a0 { 1 } else { 0 };
     for (i, reg) in ARG_REGS.iter().enumerate().skip(restore_from) {
-        RVInst::Lw {
-            rd: reg,
-            rs1: "sp",
-            offset: ctx.saved_arg_offset(i),
-        }
-        .emit_indent2(buf)
-        .unwrap();
+        emit_lw_sp_offset(ctx, buf, reg, ctx.saved_arg_offset(i)).unwrap();
     }
 }
 
-fn emit_prologue(ctx: &Ctx, buf: &mut File) -> Result<()> {
-    RVInst::Addi {
-        rd: "sp",
-        rs1: "sp",
-        imm12: -(ctx.stack_size as i32),
+fn emit_prologue(ctx: &mut Ctx, buf: &mut File) -> Result<()> {
+    let sp_delta = -(ctx.stack_size as i32);
+    if fits_i12(sp_delta) {
+        RVInst::Addi {
+            rd: "sp",
+            rs1: "sp",
+            imm12: sp_delta,
+        }
+        .emit_indent2(buf)?;
+    } else {
+        let tmp = ctx.alloc_reg(None);
+        RVInst::Li {
+            rd: RegAlloc::literal(tmp),
+            imm12: sp_delta,
+        }
+        .emit_indent2(buf)?;
+        RVInst::Add {
+            rd: "sp",
+            rs1: "sp",
+            rs2: RegAlloc::literal(tmp),
+        }
+        .emit_indent2(buf)?;
+        ctx.free_reg(tmp);
     }
-    .emit_indent2(buf)?;
-    RVInst::Sw {
-        rs2: "ra",
-        rs1: "sp",
-        offset: ctx.ra_offset(),
-    }
-    .emit_indent2(buf)?;
+
+    emit_sw_sp_offset(ctx, buf, "ra", ctx.ra_offset())?;
 
     // FIXME: 总是保存 a0-a7
     save_caller_regs(ctx, buf);
@@ -62,21 +137,34 @@ fn emit_prologue(ctx: &Ctx, buf: &mut File) -> Result<()> {
     Ok(())
 }
 
-fn emit_epilogue(ctx: &Ctx, buf: &mut File, keep_a0: bool) -> Result<()> {
-    restore_caller_regs(ctx, buf, keep_a0);
+fn emit_epilogue(ctx: &mut Ctx, buf: &mut File, keep_a0: bool) -> Result<()> {
+    restore_caller_regs_mut(ctx, buf, keep_a0);
 
-    RVInst::Lw {
-        rd: "ra",
-        rs1: "sp",
-        offset: ctx.ra_offset(),
+    emit_lw_sp_offset(ctx, buf, "ra", ctx.ra_offset())?;
+
+    let sp_delta = ctx.stack_size as i32;
+    if fits_i12(sp_delta) {
+        RVInst::Addi {
+            rd: "sp",
+            rs1: "sp",
+            imm12: sp_delta,
+        }
+        .emit_indent2(buf)?;
+    } else {
+        let tmp = ctx.alloc_reg(None);
+        RVInst::Li {
+            rd: RegAlloc::literal(tmp),
+            imm12: sp_delta,
+        }
+        .emit_indent2(buf)?;
+        RVInst::Add {
+            rd: "sp",
+            rs1: "sp",
+            rs2: RegAlloc::literal(tmp),
+        }
+        .emit_indent2(buf)?;
+        ctx.free_reg(tmp);
     }
-    .emit_indent2(buf)?;
-    RVInst::Addi {
-        rd: "sp",
-        rs1: "sp",
-        imm12: ctx.stack_size as i32,
-    }
-    .emit_indent2(buf)?;
 
     Ok(())
 }
@@ -106,14 +194,34 @@ fn is_zero_integer(kind: &ValueKind) -> bool {
     matches!(kind, ValueKind::Integer(i) if i.value() == 0)
 }
 
+fn value_type<'a>(ctx: &Ctx<'a>, v: Value) -> Type {
+    if v.is_global() {
+        ctx.program().borrow_value(v).ty().clone()
+    } else {
+        ctx.func_data().dfg().value(v).ty().clone()
+    }
+}
+
+fn ptr_elem_size_for_getptr<'a>(ctx: &Ctx<'a>, src: Value) -> usize {
+    match value_type(ctx, src).kind() {
+        TypeKind::Pointer(base) => base.size(),
+        _ => unreachable!(),
+    }
+}
+
+fn ptr_elem_size_for_getelemptr<'a>(ctx: &Ctx<'a>, src: Value) -> usize {
+    match value_type(ctx, src).kind() {
+        TypeKind::Pointer(pointee) => match pointee.kind() {
+            TypeKind::Array(base, _) => base.size(),
+            _ => unreachable!(),
+        },
+        _ => unreachable!(),
+    }
+}
+
 fn load_from_stack(ctx: &mut Ctx, buf: &mut File, v: Value, offset: i32) -> Result<LoadedReg> {
     let reg = ctx.alloc_reg(Some(v));
-    RVInst::Lw {
-        rd: RegAlloc::literal(reg),
-        rs1: "sp",
-        offset,
-    }
-    .emit_indent2(buf)?;
+    emit_lw_sp_offset(ctx, buf, RegAlloc::literal(reg), offset)?;
     Ok(LoadedReg::Temp(reg))
 }
 
@@ -165,12 +273,7 @@ fn load_operand_to_reg(ctx: &mut Ctx, buf: &mut File, v: Value) -> Result<Loaded
                 .stack_offset(&v)
                 .expect("Alloc value must have stack slot");
             let reg = ctx.alloc_reg(Some(v));
-            RVInst::Addi {
-                rd: RegAlloc::literal(reg),
-                rs1: "sp",
-                imm12: offset,
-            }
-            .emit_indent2(buf)?;
+            emit_add_sp_imm_or_tmp(ctx, buf, RegAlloc::literal(reg), offset)?;
             return Ok(LoadedReg::Temp(reg));
         }
     }
@@ -259,12 +362,7 @@ fn spill_to_stack_if_needed(
     src: &'static str,
 ) -> Result<()> {
     if let Some(offset) = ctx.stack_offset(v) {
-        RVInst::Sw {
-            rs2: src,
-            rs1: "sp",
-            offset,
-        }
-        .emit_indent2(buf)?;
+        emit_sw_sp_offset(ctx, buf, src, offset)?;
     }
     Ok(())
 }
@@ -627,6 +725,86 @@ impl AsmGen for Value {
                 if !value_data.ty().is_unit() {
                     spill_to_stack_if_needed(ctx, buf, self, "a0")?;
                 }
+            }
+            ValueKind::GetPtr(getptr) => {
+                let src = getptr.src();
+                let index = getptr.index();
+
+                let src_reg = load_operand_to_reg(ctx, buf, src)?;
+                let index_reg = load_operand_to_reg(ctx, buf, index)?;
+
+                let elem_size = ptr_elem_size_for_getptr(ctx, src) as i32;
+
+                let tmp_scale = ctx.alloc_reg(None);
+                RVInst::Li {
+                    rd: RegAlloc::literal(tmp_scale),
+                    imm12: elem_size,
+                }
+                .emit_indent2(buf)?;
+
+                let tmp_off = ctx.alloc_reg(None);
+                RVInst::Mul {
+                    rd: RegAlloc::literal(tmp_off),
+                    rs1: index_reg.as_str(),
+                    rs2: RegAlloc::literal(tmp_scale),
+                }
+                .emit_indent2(buf)?;
+
+                let result_reg = ctx.alloc_reg(Some(*self));
+                RVInst::Add {
+                    rd: RegAlloc::literal(result_reg),
+                    rs1: src_reg.as_str(),
+                    rs2: RegAlloc::literal(tmp_off),
+                }
+                .emit_indent2(buf)?;
+
+                spill_to_stack_if_needed(ctx, buf, self, RegAlloc::literal(result_reg))?;
+
+                src_reg.free(ctx);
+                index_reg.free(ctx);
+                ctx.free_reg(tmp_scale);
+                ctx.free_reg(tmp_off);
+                ctx.free_reg(result_reg);
+            }
+            ValueKind::GetElemPtr(gep) => {
+                let src = gep.src();
+                let index = gep.index();
+
+                let src_reg = load_operand_to_reg(ctx, buf, src)?;
+                let index_reg = load_operand_to_reg(ctx, buf, index)?;
+
+                let elem_size = ptr_elem_size_for_getelemptr(ctx, src) as i32;
+
+                let tmp_scale = ctx.alloc_reg(None);
+                RVInst::Li {
+                    rd: RegAlloc::literal(tmp_scale),
+                    imm12: elem_size,
+                }
+                .emit_indent2(buf)?;
+
+                let tmp_off = ctx.alloc_reg(None);
+                RVInst::Mul {
+                    rd: RegAlloc::literal(tmp_off),
+                    rs1: index_reg.as_str(),
+                    rs2: RegAlloc::literal(tmp_scale),
+                }
+                .emit_indent2(buf)?;
+
+                let result_reg = ctx.alloc_reg(Some(*self));
+                RVInst::Add {
+                    rd: RegAlloc::literal(result_reg),
+                    rs1: src_reg.as_str(),
+                    rs2: RegAlloc::literal(tmp_off),
+                }
+                .emit_indent2(buf)?;
+
+                spill_to_stack_if_needed(ctx, buf, self, RegAlloc::literal(result_reg))?;
+
+                src_reg.free(ctx);
+                index_reg.free(ctx);
+                ctx.free_reg(tmp_scale);
+                ctx.free_reg(tmp_off);
+                ctx.free_reg(result_reg);
             }
             _ => unimplemented!(),
         }
